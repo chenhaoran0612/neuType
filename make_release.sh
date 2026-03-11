@@ -39,7 +39,7 @@ else
 fi
 
 echo ""
-echo "🚀 Making release for WangWhisper v${NEW_VERSION}"
+echo "🚀 Making release for youmi-uu v${NEW_VERSION}"
 echo "   Code signing identity: ${CODE_SIGN_IDENTITY}"
 if [[ -n "$GITHUB_TOKEN" ]]; then
     echo "   GitHub release: ✅ Enabled"
@@ -64,9 +64,9 @@ echo "✅ Updated MARKETING_VERSION to ${NEW_VERSION} and CURRENT_PROJECT_VERSIO
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
 rm -rf build
-rm -f WangWhisper.dmg
-rm -f WangWhisper.dmg.sha256
-rm -f WangWhisper.app.dSYM.zip
+rm -f youmi-uu.dmg
+rm -f youmi-uu.dmg.sha256
+rm -f youmi-uu.app.dSYM.zip
 
 # Use the existing notarize_app.sh script to build, sign, and notarize
 echo "🔨 Building, signing and notarizing with notarize_app.sh..."
@@ -85,7 +85,7 @@ fi
 
 echo "✅ Build and notarization successful!"
 
-DMG_PATH="./WangWhisper.dmg"
+DMG_PATH="./youmi-uu.dmg"
 
 # Verify DMG exists
 if [[ ! -f "$DMG_PATH" ]]; then
@@ -94,8 +94,8 @@ if [[ ! -f "$DMG_PATH" ]]; then
 fi
 
 # Find and prepare dSYM
-DSYM_PATH="./build/Build/Products/Release/WangWhisper.app.dSYM"
-DSYM_ZIP_PATH="./WangWhisper.app.dSYM.zip"
+DSYM_PATH="./build/Build/Products/Release/youmi-uu.app.dSYM"
+DSYM_ZIP_PATH="./youmi-uu.app.dSYM.zip"
 
 if [[ -d "$DSYM_PATH" ]]; then
     echo "📦 Creating dSYM zip..."
@@ -142,12 +142,12 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        https://api.github.com/repos/Starmel/WangWhisper/releases \
+        https://api.github.com/repos/chenhaoran0612/youmi-uu/releases \
         -d '{
             "tag_name": "'${NEW_VERSION}'",
-            "target_commitish": "master",
+            "target_commitish": "main",
             "name": "Release '${NEW_VERSION}'",
-            "body": "## WangWhisper '${NEW_VERSION}'\n\nReal-time audio transcription for macOS using Whisper.\n\n## Installation\n\n### Homebrew (Recommended)\n```bash\nbrew update\nbrew install wangwhisper\n```\n\n### Manual Installation\n1. Download the `WangWhisper.dmg` file below\n2. Open the DMG and drag WangWhisper to Applications\n3. Launch the app and grant necessary permissions\n\n## Requirements\n- macOS 14.0 (Sonoma) or later\n- Apple Silicon (ARM64) Mac",
+            "body": "## youmi-uu '${NEW_VERSION}'\n\nReal-time audio transcription for macOS using Whisper.\n\n## Installation\n\n### Manual Installation\n1. Download the `youmi-uu.dmg` file below\n2. Open the DMG and drag youmi-uu to Applications\n3. Launch the app and grant necessary permissions\n\n## Requirements\n- macOS 14.0 (Sonoma) or later\n- Apple Silicon (ARM64) Mac",
             "draft": false,
             "prerelease": false,
             "generate_release_notes": false
@@ -171,7 +171,7 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -H "Content-Type: application/octet-stream" \
-        "https://uploads.github.com/repos/Starmel/WangWhisper/releases/${RELEASE_ID}/assets?name=WangWhisper.dmg" \
+        "https://uploads.github.com/repos/chenhaoran0612/youmi-uu/releases/${RELEASE_ID}/assets?name=youmi-uu.dmg" \
         --data-binary @"${DMG_PATH}")
     
     # Check if upload was successful
@@ -198,7 +198,7 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/zip" \
-            "https://uploads.github.com/repos/Starmel/WangWhisper/releases/${RELEASE_ID}/assets?name=WangWhisper.app.dSYM.zip" \
+            "https://uploads.github.com/repos/chenhaoran0612/youmi-uu/releases/${RELEASE_ID}/assets?name=youmi-uu.app.dSYM.zip" \
             --data-binary @"${DSYM_ZIP_PATH}")
         
         # Check dSYM upload
@@ -217,41 +217,41 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
     
     echo "✅ DMG uploaded successfully!"
     echo "🎉 GitHub release is complete!"
-    echo "🔗 Release URL: https://github.com/Starmel/WangWhisper/releases/tag/${NEW_VERSION}"
+    echo "🔗 Release URL: https://github.com/chenhaoran0612/youmi-uu/releases/tag/${NEW_VERSION}"
 else
     echo "⚠️ Skipping GitHub release creation (no token provided)"
     echo "📋 Manual steps needed:"
     echo "1. Create GitHub release at:"
-    echo "   https://github.com/Starmel/WangWhisper/releases/new?tag=${NEW_VERSION}"
-    echo "2. Upload the DMG file: WangWhisper.dmg"
+    echo "   https://github.com/chenhaoran0612/youmi-uu/releases/new?tag=${NEW_VERSION}"
+    echo "2. Upload the DMG file: youmi-uu.dmg"
 fi
 
 echo ""
 echo "🎉 Release ${NEW_VERSION} is ready!"
 echo ""
 echo "📁 Files created:"
-echo "   - WangWhisper.dmg"
-echo "   - WangWhisper.dmg.sha256"
+echo "   - youmi-uu.dmg"
+echo "   - youmi-uu.dmg.sha256"
 if [[ -f "$DSYM_ZIP_PATH" ]]; then
-    echo "   - WangWhisper.app.dSYM.zip"
+    echo "   - youmi-uu.app.dSYM.zip"
 fi
 echo ""
 echo "🍺 Homebrew cask update:"
 echo "-----"
 cat << EOF
-cask "wangwhisper" do
+cask "youmi-uu" do
   version "${NEW_VERSION}"
   sha256 "${SHA256}"
 
-  url "https://github.com/starmel/WangWhisper/releases/download/#{version}/WangWhisper.dmg"
-  name "WangWhisper"
+  url "https://github.com/chenhaoran0612/youmi-uu/releases/download/#{version}/youmi-uu.dmg"
+  name "youmi-uu"
   desc "Whisper dictation/transcription app"
-  homepage "https://github.com/starmel/WangWhisper"
+  homepage "https://github.com/chenhaoran0612/youmi-uu"
 
   depends_on macos: ">= :sonoma"
   depends_on arch: :arm64
 
-  app "WangWhisper.app"
+  app "youmi-uu.app"
 
   zap trash: [
     "~/Library/Application Scripts/ru.starmel.WangWhisper",

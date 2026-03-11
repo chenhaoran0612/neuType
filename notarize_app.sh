@@ -2,9 +2,9 @@
 set -e
 
 # === Configuration Variables ===
-APP_NAME="WangWhisper"                                   
-APP_PATH="./build/Build/Products/Release/WangWhisper.app"                        
-ZIP_PATH="./build/WangWhisper.zip"                        
+APP_NAME="youmi-uu"                                   
+APP_PATH="./build/Build/Products/Release/youmi-uu.app"                        
+ZIP_PATH="./build/youmi-uu.zip"                        
 BUNDLE_ID="ru.starmel.WangWhisper"                       
 KEYCHAIN_PROFILE="Slava"
 CODE_SIGN_IDENTITY="${1}"
@@ -34,7 +34,7 @@ xcodebuild \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY}" \
-  OTHER_CODE_SIGN_FLAGS=--timestamp \
+  OTHER_CODE_SIGN_FLAGS="--timestamp --entitlements WangWhisper/WangWhisper.entitlements" \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   -derivedDataPath build \
   build | xcpretty --simple --color
