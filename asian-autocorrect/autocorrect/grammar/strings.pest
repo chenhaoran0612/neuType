@@ -1,0 +1,21 @@
+//! Strings file Parser
+item       = _{ SOI ~ line* ~ EOI }
+line       = _{ pair | other }
+WHITESPACE =  { " " | "\t" | NEWLINE }
+other      = ${ !(pair) ~ ANY }
+
+/// Comment
+COMMENT       = ${ line_comment | block_comment }
+line_comment  = _{ "//" ~ (!NEWLINE ~ ANY)* }
+block_comment = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+
+/// Pair, e.g.: `"foo" = "Foo bar"`
+pair                = _{ key ~ assignment_operator ~ string }
+key                 = @{ string }
+assignment_operator = @{ "=" }
+
+/// String
+string       = @{ inner_string }
+inner_string = _{
+    "\"" ~ (!(NEWLINE | "\"") ~ ANY)* ~ "\""
+}

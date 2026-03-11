@@ -1,0 +1,21 @@
+//! C Parser
+item  = _{ SOI ~ line* ~ EOI }
+line  = _{ include | string | other }
+other = ${ !(string) ~ ANY }
+
+/// Whitespace
+WHITESPACE = { " " | "\t" | NEWLINE }
+
+/// Comments
+line_comment  = _{ "//" ~ (!(NEWLINE) ~ ANY)* }
+block_comment = _{ "/*" ~ (!("*/") ~ ANY)* ~ "*/" }
+COMMENT       = ${ line_comment | block_comment }
+
+/// #include
+include = ${ "#include" ~ " "+ ~ inner_string }
+
+/// string
+string       = ${ inner_string }
+inner_string = _{
+    ("\"" ~ (!(NEWLINE | "\"") ~ ANY)* ~ "\"")
+}

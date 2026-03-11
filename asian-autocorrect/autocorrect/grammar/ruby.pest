@@ -1,0 +1,24 @@
+//! Ruby Parser
+item       = _{ SOI ~ line* ~ EOI }
+line       = _{ string | regexp | other }
+other      = ${ !(string) ~ ANY }
+WHITESPACE =  { " " | "\t" | NEWLINE }
+
+/// Comment
+COMMENT       = ${ line_comment | block_comment }
+line_comment  = _{ "#" ~ (!(NEWLINE) ~ ANY)* }
+block_comment = _{ "/*" ~ (!("*/") ~ ANY)* ~ "*/" }
+
+/// String
+string       = ${
+    PUSH("'") ~ inner_string ~ POP
+  | PUSH("\"") ~ inner_string ~ POP
+}
+inner_string =  { (!(NEWLINE | PEEK) ~ ANY)* }
+
+/// Regexp
+regexp = ${
+    PUSH("/") ~ (!(NEWLINE | "/") ~ ANY)* ~ POP
+  | ("%r{" ~ (!(NEWLINE | "}") ~ ANY)* ~ "}")
+  | ("Regexp.new(" ~ " "* ~ (!")" ~ ANY)* ~ ")")
+}

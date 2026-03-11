@@ -1,0 +1,23 @@
+//! Objective-C Parser
+item       = _{ SOI ~ line* ~ EOI }
+line       = _{ ignore_string | string | other }
+other      = ${ !(string) ~ ANY }
+WHITESPACE =  { " " | "\t" | NEWLINE }
+
+/// Comment
+COMMENT      = ${ line_comment }
+line_comment = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+/// String
+string       = ${ inner_string }
+inner_string = _{
+    "@\"" ~ (!(NEWLINE | "\"") ~ ANY)* ~ "\""
+}
+
+/// String to ingore
+ignore_string    = ${
+    ingore_methods ~ "(" ~ WHITE_SPACE* ~ inner_string
+  | ignore_arguments ~ WHITE_SPACE* ~ inner_string
+}
+ingore_methods   = _{ "NSRegularExpression" | "NSLocalizedString" | "Match" }
+ignore_arguments = _{ ("WithPattern" | "WithKey") ~ ":" }

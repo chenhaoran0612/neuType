@@ -1,0 +1,13 @@
+[package]
+edition = "2021"
+name = "autocorrect-rb"
+version = "2.14.3"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["cdylib"]
+name = "autocorrect"
+
+[dependencies]
+autocorrect = "2"
+magnus = "0.7"
