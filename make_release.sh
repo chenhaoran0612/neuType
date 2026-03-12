@@ -142,7 +142,7 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        https://api.github.com/repos/chenhaoran0612/NeuType/releases \
+        https://api.github.com/repos/chenhaoran0612/neuType/releases \
         -d '{
             "tag_name": "'${NEW_VERSION}'",
             "target_commitish": "main",
@@ -171,7 +171,7 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -H "Content-Type: application/octet-stream" \
-        "https://uploads.github.com/repos/chenhaoran0612/NeuType/releases/${RELEASE_ID}/assets?name=NeuType.dmg" \
+        "https://uploads.github.com/repos/chenhaoran0612/neuType/releases/${RELEASE_ID}/assets?name=NeuType.dmg" \
         --data-binary @"${DMG_PATH}")
     
     # Check if upload was successful
@@ -198,7 +198,7 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/zip" \
-            "https://uploads.github.com/repos/chenhaoran0612/NeuType/releases/${RELEASE_ID}/assets?name=NeuType.app.dSYM.zip" \
+            "https://uploads.github.com/repos/chenhaoran0612/neuType/releases/${RELEASE_ID}/assets?name=NeuType.app.dSYM.zip" \
             --data-binary @"${DSYM_ZIP_PATH}")
         
         # Check dSYM upload
@@ -217,12 +217,12 @@ if [[ -n "$GITHUB_TOKEN" ]]; then
     
     echo "✅ DMG uploaded successfully!"
     echo "🎉 GitHub release is complete!"
-    echo "🔗 Release URL: https://github.com/chenhaoran0612/NeuType/releases/tag/${NEW_VERSION}"
+    echo "🔗 Release URL: https://github.com/chenhaoran0612/neuType/releases/tag/${NEW_VERSION}"
 else
     echo "⚠️ Skipping GitHub release creation (no token provided)"
     echo "📋 Manual steps needed:"
     echo "1. Create GitHub release at:"
-    echo "   https://github.com/chenhaoran0612/NeuType/releases/new?tag=${NEW_VERSION}"
+    echo "   https://github.com/chenhaoran0612/neuType/releases/new?tag=${NEW_VERSION}"
     echo "2. Upload the DMG file: NeuType.dmg"
 fi
 
@@ -243,10 +243,10 @@ cask "NeuType" do
   version "${NEW_VERSION}"
   sha256 "${SHA256}"
 
-  url "https://github.com/chenhaoran0612/NeuType/releases/download/#{version}/NeuType.dmg"
+  url "https://github.com/chenhaoran0612/neuType/releases/download/#{version}/NeuType.dmg"
   name "NeuType"
   desc "Whisper dictation/transcription app"
-  homepage "https://github.com/chenhaoran0612/NeuType"
+  homepage "https://github.com/chenhaoran0612/neuType"
 
   depends_on macos: ">= :sonoma"
   depends_on arch: :arm64

@@ -1,6 +1,6 @@
 # NeuType
 
-NeuType is a macOS application that provides real-time audio transcription using the Whisper model. It offers a seamless way to record and transcribe audio with customizable settings and keyboard shortcuts.
+NeuType is a macOS application for fast voice-to-text on Apple Silicon Macs.
 
 <p align="center">
 <img src="docs/image.png" width="400" /> <img src="docs/image_indicator.png" width="400" />
@@ -9,22 +9,15 @@ NeuType is a macOS application that provides real-time audio transcription using
 ## Features
 
 - 🎙️ Real-time audio recording and transcription
-- 🧠 Two transcription engines: [Whisper](https://github.com/ggerganov/whisper.cpp) and [Parakeet](https://github.com/AntinomyCollective/FluidAudio) — download models directly from the app
-- ⌨️ Global keyboard shortcuts — key combination or single modifier key (e.g. Left ⌘, Right ⌥, Fn)
-- ✊ Hold-to-record mode — hold the shortcut to record, release to stop
+- ☁️ Cloud ASR via Groq (`whisper-large-v3`)
+- ⌨️ Start recording with a single modifier key (Multi Button mode)
 - 📁 Drag & drop audio files for transcription with queue processing
 - 🎤 Microphone selection — switch between built-in, external, Bluetooth and iPhone (Apple Continuity) mics from the menu bar
-- 🌍 Support for multiple languages with auto-detection
-- 🇯🇵🇨🇳🇰🇷 Asian language autocorrect ([autocorrect](https://github.com/huacnlee/autocorrect))
+- ✨ Optional transcript cleanup with LLM post-processing
 
 ## Installation
 
-```shell
-brew update # Optional
-brew install wangwhisper
-```
-
-Or from [GitHub releases page](https://github.com/Starmel/NeuType/releases).
+Download from the [GitHub Releases page](https://github.com/chenhaoran0612/neuType/releases).
 
 ## Requirements
 
@@ -41,7 +34,7 @@ If you encounter any issues or have questions, please:
 
 To build locally, you'll need:
 
-    git clone git@github.com:Starmel/NeuType.git
+    git clone git@github.com:chenhaoran0612/neuType.git
     cd NeuType
     git submodule update --init --recursive
     brew install cmake libomp rust ruby
@@ -55,19 +48,6 @@ where the app gets built automatically on GitHub's CI.
 
 Contributions are welcome! Please feel free to submit pull requests or create issues for bugs and feature requests.
 
-### Contribution TODO list
-
-- [ ] Streaming transcription
-- [ ] Custom dictionary / keyword boosting ([#19](https://github.com/Starmel/NeuType/issues/19))
-- [ ] Intel macOS compatibility ([#15](https://github.com/Starmel/NeuType/issues/15))
-- [ ] Agent mode ([#14](https://github.com/Starmel/NeuType/issues/14))
-- [x] Background app ([#8](https://github.com/Starmel/NeuType/issues/8))
-- [x] Support long-press single key audio recording ([#18](https://github.com/Starmel/NeuType/issues/18))
-
 ## License
 
 NeuType is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Whisper Models
-
-You can download Whisper model files (`.bin`) from the [Whisper.cpp Hugging Face repository](https://huggingface.co/ggerganov/whisper.cpp/tree/main). Place the downloaded `.bin` files in the app's models directory. On first launch, the app will attempt to copy a default model automatically, but you can add more models manually.

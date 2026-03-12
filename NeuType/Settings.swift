@@ -70,7 +70,7 @@ struct SettingsView: View {
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
                 Spacer()
-                Link("GitHub", destination: URL(string: "https://github.com/Starmel/NeuType")!)
+                Link("GitHub", destination: URL(string: "https://github.com/chenhaoran0612/neuType")!)
                     .foregroundColor(.secondary)
             }
             .padding()
