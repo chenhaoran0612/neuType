@@ -2,10 +2,10 @@
 set -e
 
 # === Configuration Variables ===
-APP_NAME="youmi-uu"                                   
-APP_PATH="./build/Build/Products/Release/youmi-uu.app"                        
-ZIP_PATH="./build/youmi-uu.zip"                        
-BUNDLE_ID="ru.starmel.WangWhisper"                       
+APP_NAME="NeuType"                                   
+APP_PATH="./build/Build/Products/Release/NeuType.app"                        
+ZIP_PATH="./build/NeuType.zip"                        
+BUNDLE_ID="ai.neuxnet.neutype"                       
 KEYCHAIN_PROFILE="Slava"
 CODE_SIGN_IDENTITY="${1}"
 DEVELOPMENT_TEAM="8LLDD7HWZK"
@@ -28,13 +28,13 @@ install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
 codesign --force --sign "${CODE_SIGN_IDENTITY}" --timestamp ./build/libomp.dylib
 
 xcodebuild \
-  -scheme "WangWhisper" \
+  -scheme "NeuType" \
   -configuration Release \
   -destination "platform=macOS,arch=arm64" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY}" \
-  OTHER_CODE_SIGN_FLAGS="--timestamp --entitlements WangWhisper/WangWhisper.entitlements" \
+  OTHER_CODE_SIGN_FLAGS="--timestamp --entitlements NeuType/NeuType.entitlements" \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   -derivedDataPath build \
   build | xcpretty --simple --color

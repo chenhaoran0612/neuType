@@ -1,6 +1,6 @@
-# WangWhisper
+# NeuType
 
-WangWhisper is a macOS application that provides real-time audio transcription using the Whisper model. It offers a seamless way to record and transcribe audio with customizable settings and keyboard shortcuts.
+NeuType is a macOS application that provides real-time audio transcription using the Whisper model. It offers a seamless way to record and transcribe audio with customizable settings and keyboard shortcuts.
 
 <p align="center">
 <img src="docs/image.png" width="400" /> <img src="docs/image_indicator.png" width="400" />
@@ -24,7 +24,7 @@ brew update # Optional
 brew install wangwhisper
 ```
 
-Or from [GitHub releases page](https://github.com/Starmel/WangWhisper/releases).
+Or from [GitHub releases page](https://github.com/Starmel/NeuType/releases).
 
 ## Requirements
 
@@ -41,8 +41,8 @@ If you encounter any issues or have questions, please:
 
 To build locally, you'll need:
 
-    git clone git@github.com:Starmel/WangWhisper.git
-    cd WangWhisper
+    git clone git@github.com:Starmel/NeuType.git
+    cd NeuType
     git submodule update --init --recursive
     brew install cmake libomp rust ruby
     gem install xcpretty
@@ -58,15 +58,15 @@ Contributions are welcome! Please feel free to submit pull requests or create is
 ### Contribution TODO list
 
 - [ ] Streaming transcription
-- [ ] Custom dictionary / keyword boosting ([#19](https://github.com/Starmel/WangWhisper/issues/19))
-- [ ] Intel macOS compatibility ([#15](https://github.com/Starmel/WangWhisper/issues/15))
-- [ ] Agent mode ([#14](https://github.com/Starmel/WangWhisper/issues/14))
-- [x] Background app ([#8](https://github.com/Starmel/WangWhisper/issues/8))
-- [x] Support long-press single key audio recording ([#18](https://github.com/Starmel/WangWhisper/issues/18))
+- [ ] Custom dictionary / keyword boosting ([#19](https://github.com/Starmel/NeuType/issues/19))
+- [ ] Intel macOS compatibility ([#15](https://github.com/Starmel/NeuType/issues/15))
+- [ ] Agent mode ([#14](https://github.com/Starmel/NeuType/issues/14))
+- [x] Background app ([#8](https://github.com/Starmel/NeuType/issues/8))
+- [x] Support long-press single key audio recording ([#18](https://github.com/Starmel/NeuType/issues/18))
 
 ## License
 
-WangWhisper is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+NeuType is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Whisper Models
 

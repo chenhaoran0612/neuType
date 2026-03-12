@@ -32,8 +32,8 @@ install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
 codesign --force --sign - ./build/libomp.dylib
 
 # Build the app
-echo "Building youmi-uu..."
-BUILD_OUTPUT=$(xcodebuild -scheme WangWhisper -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'platform=macOS,arch=arm64' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO OTHER_CODE_SIGN_FLAGS="--entitlements WangWhisper/WangWhisper.entitlements" build 2>&1)
+echo "Building NeuType..."
+BUILD_OUTPUT=$(xcodebuild -scheme NeuType -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'platform=macOS,arch=arm64' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO OTHER_CODE_SIGN_FLAGS="--entitlements NeuType/NeuType.entitlements" build 2>&1)
 
 # sudo gem install xcpretty
 if command -v xcpretty &> /dev/null
@@ -51,9 +51,9 @@ if [[ $? -eq 0 ]] && [[ ! "$BUILD_OUTPUT" =~ "BUILD FAILED" ]]; then
     fi
     echo "Starting the app..."
     # Remove quarantine attribute if exists
-    xattr -d com.apple.quarantine ./build/Build/Products/Debug/youmi-uu.app 2>/dev/null || true
+    xattr -d com.apple.quarantine ./build/Build/Products/Debug/NeuType.app 2>/dev/null || true
     # Run the app and show logs
-    ./build/Build/Products/Debug/youmi-uu.app/Contents/MacOS/youmi-uu
+    ./build/Build/Products/Debug/NeuType.app/Contents/MacOS/NeuType
 else
     echo "Build failed!"
     exit 1
