@@ -73,13 +73,28 @@ private struct GroqChatStreamChunk: Decodable {
 }
 
 enum DisfluencyCleaner {
-    private static let endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    private static let model = "openai/gpt-oss-20b"
-
     static func clean(text: String, languageCode: String, apiKey: String) async -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return text }
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        guard !trimmed.isEmpty else {
+            RequestLogStore.log(.llm, "Final <- (skipped: empty input)")
+            return text
+        }
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            RequestLogStore.log(.llm, "Final <- (skipped: missing LLM API key)")
+            return text
+        }
+        let endpoint = resolvedEndpoint(from: AppPreferences.shared.llmAPIBaseURL, path: "/chat/completions")
+        let configuredModel = AppPreferences.shared.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let llmModel = configuredModel.isEmpty ? "openai/gpt-oss-20b" : configuredModel
+        let configuredPrompt = AppPreferences.shared.llmOptimizationPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let systemPrompt = configuredPrompt.isEmpty
+            ? "You are an expert transcription editor. Improve clarity and readability while preserving the original meaning, intent, tone, and language. Remove filler words, stutters, and obvious disfluencies only when safe. Keep names, numbers, facts, and ordering unchanged. Fix punctuation and sentence boundaries so the text is easy to read and unambiguous. If the output text is Traditional Chinese, convert it to Simplified Chinese while preserving meaning and terminology. Do not add new information or reinterpret meaning. Return only the edited transcript text."
+            : configuredPrompt
+
+        RequestLogStore.log(
+            .llm,
+            "Request -> endpoint=\(endpoint.absoluteString), model=\(llmModel), language=\(languageCode), inputLength=\(trimmed.count), stream=true"
+        )
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -87,16 +102,15 @@ enum DisfluencyCleaner {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let systemPrompt = "You are a transcription post-processor. Remove filler words, disfluencies, repetitions, and stutters while preserving meaning, tone, and language. Keep punctuation natural. Return only the cleaned text."
         let userPrompt = "Language code: \(languageCode).\nOriginal transcript:\n\(trimmed)"
 
         let payload = GroqChatRequest(
-            model: model,
+            model: llmModel,
             messages: [
                 .init(role: "system", content: systemPrompt),
                 .init(role: "user", content: userPrompt)
             ],
-            temperature: 1.0,
+            temperature: 0.1,
             maxCompletionTokens: 8192,
             topP: 1.0,
             stream: true,
@@ -109,8 +123,14 @@ enum DisfluencyCleaner {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
+                if let httpResponse = response as? HTTPURLResponse {
+                    RequestLogStore.log(.llm, "Error <- status=\(httpResponse.statusCode)")
+                }
+                RequestLogStore.log(.llm, "Final <- \(text.replacingOccurrences(of: "\n", with: "\\n"))")
                 return text
             }
+
+            RequestLogStore.log(.llm, "Response <- status=\(httpResponse.statusCode), stream=true")
 
             let decoder = JSONDecoder()
             var content = ""
@@ -133,13 +153,14 @@ enum DisfluencyCleaner {
             }
 
             if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                RequestLogStore.log(.llm, "Fallback -> empty stream content, retrying non-stream")
                 let fallbackPayload = GroqChatRequest(
-                    model: model,
+                    model: llmModel,
                     messages: [
                         .init(role: "system", content: systemPrompt),
                         .init(role: "user", content: userPrompt)
                     ],
-                    temperature: 1.0,
+                    temperature: 0.1,
                     maxCompletionTokens: 8192,
                     topP: 1.0,
                     stream: false,
@@ -152,16 +173,27 @@ enum DisfluencyCleaner {
                 let (data, fallbackResponse) = try await URLSession.shared.data(for: fallbackRequest)
                 guard let fallbackHTTPResponse = fallbackResponse as? HTTPURLResponse,
                       (200...299).contains(fallbackHTTPResponse.statusCode) else {
+                    if let fallbackHTTPResponse = fallbackResponse as? HTTPURLResponse {
+                        RequestLogStore.log(.llm, "Error <- fallback status=\(fallbackHTTPResponse.statusCode)")
+                    }
+                    RequestLogStore.log(.llm, "Final <- \(text.replacingOccurrences(of: "\n", with: "\\n"))")
                     return text
                 }
+
+                RequestLogStore.log(.llm, "Response <- fallback status=\(fallbackHTTPResponse.statusCode)")
 
                 let result = try decoder.decode(GroqChatResponse.self, from: data)
                 content = result.choices.first?.message.content ?? ""
             }
 
             let cleaned = sanitizeModelOutput(content).trimmingCharacters(in: .whitespacesAndNewlines)
+            RequestLogStore.log(.llm, "Parsed <- outputLength=\(cleaned.count)")
+            let finalLLMText = cleaned.isEmpty ? text : cleaned
+            RequestLogStore.log(.llm, "Final <- \(finalLLMText.replacingOccurrences(of: "\n", with: "\\n"))")
             return cleaned.isEmpty ? text : cleaned
         } catch {
+            RequestLogStore.log(.llm, "Error <- \(error.localizedDescription)")
+            RequestLogStore.log(.llm, "Final <- \(text.replacingOccurrences(of: "\n", with: "\\n"))")
             return text
         }
     }
@@ -177,5 +209,18 @@ enum DisfluencyCleaner {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+    }
+
+    private static func resolvedEndpoint(from base: String, path: String) -> URL {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if let asURL = URL(string: trimmed), asURL.path.hasSuffix("/\(normalizedPath)") {
+            return asURL
+        }
+        if let baseURL = URL(string: trimmed) {
+            return baseURL.appendingPathComponent(normalizedPath)
+        }
+        return URL(string: "https://api.groq.com/openai/v1/chat/completions")!
     }
 }

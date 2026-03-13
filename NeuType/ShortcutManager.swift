@@ -18,10 +18,9 @@ class ShortcutManager {
     private var holdWorkItem: DispatchWorkItem?
     private let holdThreshold: TimeInterval = 0.3
     private var holdMode = false
-    private var useModifierOnlyHotkey = false
 
     private init() {
-        print("ShortcutManager init")
+        RequestLogStore.log(.usage, "ShortcutManager initialized")
         
         setupKeyboardShortcuts()
         setupModifierKeyMonitor()
@@ -42,11 +41,13 @@ class ShortcutManager {
     }
     
     @objc private func indicatorWindowDidHide() {
+        RequestLogStore.log(.usage, "Indicator hidden")
         activeVm = nil
         holdMode = false
     }
     
     @objc private func hotkeySettingsChanged() {
+        RequestLogStore.log(.usage, "Hotkey settings changed")
         setupModifierKeyMonitor()
     }
     
@@ -62,6 +63,7 @@ class ShortcutManager {
         KeyboardShortcuts.onKeyUp(for: .escape) { [weak self] in
             Task { @MainActor in
                 if self?.activeVm != nil {
+                    RequestLogStore.log(.usage, "Escape pressed -> force stop")
                     IndicatorWindowManager.shared.stopForce()
                     self?.activeVm = nil
                 }
@@ -72,9 +74,8 @@ class ShortcutManager {
     
     private func setupModifierKeyMonitor() {
         let modifierKeyString = AppPreferences.shared.modifierOnlyHotkey
-        let modifierKey = ModifierKey(rawValue: modifierKeyString) ?? .rightOption
+        let modifierKey = ModifierKey(rawValue: modifierKeyString) ?? .leftControl
 
-        useModifierOnlyHotkey = true
         KeyboardShortcuts.disable(.toggleRecord)
 
         ModifierKeyMonitor.shared.onKeyDown = { [weak self] in
@@ -86,12 +87,13 @@ class ShortcutManager {
         }
 
         ModifierKeyMonitor.shared.start(modifierKey: modifierKey)
-        print("ShortcutManager: Using modifier-only hotkey: \(modifierKey.displayName)")
+        RequestLogStore.log(.usage, "Modifier-only hotkey active: \(modifierKey.displayName)")
     }
     
     private func handleKeyDown() {
         holdWorkItem?.cancel()
         holdMode = false
+        RequestLogStore.log(.usage, "Hotkey keyDown")
         
         let holdToRecordEnabled = AppPreferences.shared.holdToRecord
         
@@ -107,9 +109,11 @@ class ShortcutManager {
                 let vm = IndicatorWindowManager.shared.show(nearPoint: indicatorPoint)
                 vm.startRecording()
                 self.activeVm = vm
+                RequestLogStore.log(.usage, "Recording started")
             } else if !self.holdMode {
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
+                RequestLogStore.log(.usage, "Recording stopped by keyDown")
             }
         }
         
@@ -125,6 +129,7 @@ class ShortcutManager {
     private func handleKeyUp() {
         holdWorkItem?.cancel()
         holdWorkItem = nil
+        RequestLogStore.log(.usage, "Hotkey keyUp")
         
         let holdToRecordEnabled = AppPreferences.shared.holdToRecord
         
@@ -133,6 +138,7 @@ class ShortcutManager {
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
                 self.holdMode = false
+                RequestLogStore.log(.usage, "Recording stopped on hold release")
             }
         }
     }

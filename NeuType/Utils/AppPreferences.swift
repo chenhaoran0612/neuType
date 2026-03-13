@@ -71,7 +71,7 @@ final class AppPreferences {
     @OptionalUserDefault(key: "selectedMicrophoneData")
     var selectedMicrophoneData: Data?
     
-    @UserDefault(key: "modifierOnlyHotkey", defaultValue: "rightOption")
+    @UserDefault(key: "modifierOnlyHotkey", defaultValue: "leftControl")
     var modifierOnlyHotkey: String
     
     @UserDefault(key: "holdToRecord", defaultValue: true)
@@ -82,4 +82,50 @@ final class AppPreferences {
 
     @UserDefault(key: "deepInfraAPIKey", defaultValue: "")
     var deepInfraAPIKey: String
+
+    @UserDefault(key: "asrAPIBaseURL", defaultValue: "https://api.groq.com/openai/v1")
+    var asrAPIBaseURL: String
+
+    @UserDefault(key: "asrAPIKey", defaultValue: "")
+    var asrAPIKey: String
+
+    @UserDefault(key: "asrModel", defaultValue: "whisper-large-v3")
+    var asrModel: String
+
+    @UserDefault(key: "llmAPIBaseURL", defaultValue: "https://api.groq.com/openai/v1")
+    var llmAPIBaseURL: String
+
+    @UserDefault(key: "llmAPIKey", defaultValue: "")
+    var llmAPIKey: String
+
+    @UserDefault(key: "llmModel", defaultValue: "openai/gpt-oss-20b")
+    var llmModel: String
+
+    @OptionalUserDefault(key: "indicatorOriginX")
+    var indicatorOriginX: Double?
+
+    @OptionalUserDefault(key: "indicatorOriginY")
+    var indicatorOriginY: Double?
+
+    @UserDefault(
+        key: "llmOptimizationPrompt",
+        defaultValue: "You are an expert transcription editor. Improve clarity and readability while preserving the original meaning, intent, tone, and language. Remove filler words, stutters, and obvious disfluencies only when safe. Keep names, numbers, facts, and ordering unchanged. Fix punctuation and sentence boundaries so the text is easy to read and unambiguous. If the output text is Traditional Chinese, convert it to Simplified Chinese while preserving meaning and terminology. Do not add new information or reinterpret meaning. Return only the edited transcript text."
+    )
+    var llmOptimizationPrompt: String
+
+    // Backward compatibility
+    var groqAPIKey: String {
+        get { deepInfraAPIKey }
+        set { deepInfraAPIKey = newValue }
+    }
+
+    var groqASRModel: String {
+        get { asrModel }
+        set { asrModel = newValue }
+    }
+
+    var groqLLMModel: String {
+        get { llmModel }
+        set { llmModel = newValue }
+    }
 }

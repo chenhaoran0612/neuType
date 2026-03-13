@@ -4,16 +4,11 @@ private struct GroqTranscriptionResponse: Decodable {
     let text: String?
 }
 
-private enum GroqASRAPI {
-    static let endpoint = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
-    static let model = "whisper-large-v3"
-}
-
 class WhisperEngine: TranscriptionEngine {
-    var engineName: String { "Groq Whisper" }
+    var engineName: String { "OpenAI-Compatible ASR" }
 
     var isModelLoaded: Bool {
-        !AppPreferences.shared.deepInfraAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !resolvedASRAPIKey().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var onProgressUpdate: ((Float) -> Void)?
@@ -25,19 +20,25 @@ class WhisperEngine: TranscriptionEngine {
     }
 
     func transcribeAudio(url: URL, settings: Settings) async throws -> String {
-        print("Groq ASR request: \(GroqASRAPI.endpoint.absoluteString), file=\(url.lastPathComponent)")
+        let endpoint = resolvedEndpoint(from: AppPreferences.shared.asrAPIBaseURL, path: "/audio/transcriptions")
+        let configuredModel = AppPreferences.shared.asrModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let asrModel = configuredModel.isEmpty ? "whisper-large-v3" : configuredModel
+        RequestLogStore.log(
+            .asr,
+            "Request -> endpoint=\(endpoint.absoluteString), model=\(asrModel), file=\(url.lastPathComponent), language=\(settings.selectedLanguage), temp=\(settings.temperature)"
+        )
         onProgressUpdate?(0.05)
 
         let audioData = try Data(contentsOf: url)
         onProgressUpdate?(0.20)
 
         let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: GroqASRAPI.endpoint)
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue(
-            "Bearer \(AppPreferences.shared.deepInfraAPIKey)",
+            "Bearer \(resolvedASRAPIKey())",
             forHTTPHeaderField: "Authorization"
         )
 
@@ -45,7 +46,8 @@ class WhisperEngine: TranscriptionEngine {
             boundary: boundary,
             audioData: audioData,
             filename: url.lastPathComponent,
-            settings: settings
+            settings: settings,
+            model: asrModel
         )
 
         onProgressUpdate?(0.45)
@@ -57,10 +59,11 @@ class WhisperEngine: TranscriptionEngine {
         }
 
         onProgressUpdate?(0.85)
-        print("Groq ASR response status: \(httpResponse.statusCode)")
+        RequestLogStore.log(.asr, "Response <- status=\(httpResponse.statusCode)")
 
         guard (200...299).contains(httpResponse.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "Unknown server error"
+            RequestLogStore.log(.asr, "Error <- status=\(httpResponse.statusCode), body=\(body)")
             throw NSError(
                 domain: "GroqWhisper",
                 code: httpResponse.statusCode,
@@ -81,9 +84,12 @@ class WhisperEngine: TranscriptionEngine {
             processedText = await DisfluencyCleaner.clean(
                 text: processedText,
                 languageCode: settings.selectedLanguage,
-                apiKey: AppPreferences.shared.deepInfraAPIKey
+                apiKey: AppPreferences.shared.llmAPIKey
             )
         }
+
+        RequestLogStore.log(.asr, "Parsed <- transcriptLength=\(processedText.count)")
+        RequestLogStore.log(.asr, "Final <- \(processedText.replacingOccurrences(of: "\n", with: "\\n"))")
 
         onProgressUpdate?(1.0)
 
@@ -101,7 +107,8 @@ class WhisperEngine: TranscriptionEngine {
         boundary: String,
         audioData: Data,
         filename: String,
-        settings: Settings
+        settings: Settings,
+        model: String
     ) -> Data {
         var body = Data()
         let lineBreak = "\r\n"
@@ -114,7 +121,7 @@ class WhisperEngine: TranscriptionEngine {
 
         body.append("--\(boundary)\(lineBreak)")
         body.append("Content-Disposition: form-data; name=\"model\"\(lineBreak)\(lineBreak)")
-        body.append("\(GroqASRAPI.model)\(lineBreak)")
+        body.append("\(model)\(lineBreak)")
 
         body.append("--\(boundary)\(lineBreak)")
         body.append("Content-Disposition: form-data; name=\"temperature\"\(lineBreak)\(lineBreak)")
@@ -139,6 +146,28 @@ class WhisperEngine: TranscriptionEngine {
 
         body.append("--\(boundary)--\(lineBreak)")
         return body
+    }
+
+    private func resolvedEndpoint(from base: String, path: String) -> URL {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if let asURL = URL(string: trimmed), asURL.path.hasSuffix("/\(normalizedPath)") {
+            return asURL
+        }
+        if let baseURL = URL(string: trimmed) {
+            return baseURL.appendingPathComponent(normalizedPath)
+        }
+
+        return URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+    }
+
+    private func resolvedASRAPIKey() -> String {
+        let configured = AppPreferences.shared.asrAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configured.isEmpty {
+            return configured
+        }
+        return AppPreferences.shared.groqAPIKey
     }
 }
 

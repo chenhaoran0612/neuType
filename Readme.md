@@ -21,7 +21,7 @@ Download from the [GitHub Releases page](https://github.com/chenhaoran0612/neuTy
 
 ## Requirements
 
-- macOS (Apple Silicon/ARM64)
+- macOS (Apple Silicon: M1/M2/M3/M4 and newer)
 
 ## Support
 

@@ -22,6 +22,7 @@ class IndicatorViewModel: ObservableObject {
     @Published var isBlinking = false
     @Published var recorder: AudioRecorder = .shared
     @Published var isVisible = false
+    @Published var customStatusText: String?
     
     var delegate: IndicatorViewDelegate?
     private var blinkTimer: Timer?
@@ -300,7 +301,7 @@ struct IndicatorWindow: View {
                         .foregroundColor(.orange)
                         .frame(width: 24)
                     
-                    Text("Processing...")
+                    Text(viewModel.customStatusText ?? "Processing...")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.orange)
                 }

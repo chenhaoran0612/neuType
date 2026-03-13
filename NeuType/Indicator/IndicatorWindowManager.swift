@@ -3,15 +3,19 @@ import KeyboardShortcuts
 import SwiftUI
 
 @MainActor
-class IndicatorWindowManager: IndicatorViewDelegate {
+class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate {
     static let shared = IndicatorWindowManager()
     
     var window: NSWindow?
     var viewModel: IndicatorViewModel?
+    private var isPositionEditing = false
     
-    private init() {}
+    private override init() {
+        super.init()
+    }
     
-    func show(nearPoint point: NSPoint? = nil) -> IndicatorViewModel {
+    func show(nearPoint point: NSPoint? = nil, allowDragging: Bool = false) -> IndicatorViewModel {
+        isPositionEditing = allowDragging
         
         KeyboardShortcuts.enable(.escape)
         
@@ -33,20 +37,27 @@ class IndicatorWindowManager: IndicatorViewDelegate {
             panel.backgroundColor = .clear
             panel.isOpaque = false
             panel.hasShadow = false
-            panel.ignoresMouseEvents = true
+            panel.ignoresMouseEvents = !allowDragging
+            panel.isMovableByWindowBackground = allowDragging
             panel.hidesOnDeactivate = false
+            panel.delegate = self
             
             self.window = panel
+        } else {
+            window?.ignoresMouseEvents = !allowDragging
+            window?.isMovableByWindowBackground = allowDragging
         }
         
-        // Position window at top-right of screen
+        // Position window using saved location, fallback to top-right
         let targetScreen = NSScreen.main ?? NSScreen.screens.first
         if let window = window, let screen = targetScreen {
             let windowFrame = window.frame
             let screenFrame = screen.frame
 
-            let x = screenFrame.maxX - windowFrame.width - 24
-            let y = screenFrame.maxY - windowFrame.height - 24
+            let defaultX = screenFrame.maxX - windowFrame.width - 24
+            let defaultY = screenFrame.maxY - windowFrame.height - 20
+            let x = AppPreferences.shared.indicatorOriginX ?? defaultX
+            let y = AppPreferences.shared.indicatorOriginY ?? defaultY
             
             // Adjust if out of screen bounds
             let clampedX = max(screenFrame.minX, min(x, screenFrame.maxX - windowFrame.width))
@@ -61,6 +72,12 @@ class IndicatorWindowManager: IndicatorViewDelegate {
         
         window?.orderFront(nil)
         return newViewModel
+    }
+
+    func showPositionEditor() {
+        let vm = show(allowDragging: true)
+        vm.state = .busy
+        vm.customStatusText = "Drag to position"
     }
     
     func stopRecording() {
@@ -84,6 +101,9 @@ class IndicatorWindowManager: IndicatorViewDelegate {
             
             self.window?.contentView = nil
             self.window?.orderOut(nil)
+            self.window?.ignoresMouseEvents = true
+            self.window?.isMovableByWindowBackground = false
+            self.isPositionEditing = false
             self.viewModel = nil
             
             NotificationCenter.default.post(name: .indicatorWindowDidHide, object: nil)
@@ -92,5 +112,11 @@ class IndicatorWindowManager: IndicatorViewDelegate {
     
     func didFinishDecoding() {
         hide()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard isPositionEditing, let origin = window?.frame.origin else { return }
+        AppPreferences.shared.indicatorOriginX = origin.x
+        AppPreferences.shared.indicatorOriginY = origin.y
     }
 }

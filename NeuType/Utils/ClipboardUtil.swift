@@ -5,6 +5,10 @@ import Carbon
 class ClipboardUtil {
     
     static func insertText(_ text: String) {
+        if isTargetInsideCurrentApp() {
+            return
+        }
+
         let pasteboard = NSPasteboard.general
         
         // Save current pasteboard contents
@@ -214,5 +218,14 @@ class ClipboardUtil {
             }
         }
         return result
+    }
+
+    private static func isTargetInsideCurrentApp() -> Bool {
+        guard let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+              let currentBundleID = Bundle.main.bundleIdentifier
+        else {
+            return false
+        }
+        return frontmostBundleID == currentBundleID
     }
 }
