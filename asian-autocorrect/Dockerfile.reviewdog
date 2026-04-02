@@ -1,7 +1,0 @@
-FROM alpine:latest
-
-RUN apk add --update curl ca-certificates git
-
-ADD install /install 
-RUN sh ./install && \
-  curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh| sh -s -- -b /usr/local/bin

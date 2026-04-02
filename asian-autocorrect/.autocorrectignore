@@ -1,5 +1,0 @@
-this-file-will-ignore.rs
-tests/fixtures/*.json
-**/*/tests/fixtures/*
-**/*.rs
-README.md
