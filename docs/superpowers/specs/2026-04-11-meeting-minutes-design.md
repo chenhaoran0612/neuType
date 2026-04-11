@@ -19,6 +19,8 @@ This design adds a second, separate workflow: a local-first meeting recording sy
 
 The first version explicitly does not generate a screen recording video and does not submit meetings to AI workforce yet.
 
+The meeting transcription core for this version is `VibeVoice ASR`. The existing Whisper-based path remains only for the current short-form voice-to-text input workflow.
+
 ## Goals
 
 - Add a dedicated meeting recording experience without changing the existing voice-to-text input behavior.
@@ -210,6 +212,8 @@ This separation avoids mixing short-form text input recordings with long-form me
 
 ## Structured Transcription
 
+The meeting feature does not reuse the current `WhisperEngine` path for transcript generation. Meeting transcription uses a dedicated `VibeVoice ASR` integration because first-version requirements include long-form transcription, timestamps, and speaker separation.
+
 ### Current Limitation
 
 Current transcription only returns a plain string even though the ASR request asks for `verbose_json`.
@@ -241,7 +245,7 @@ Meeting segment payload:
 Meeting transcription flow:
 
 1. `MeetingRecorder` saves the mixed meeting audio file.
-2. `MeetingTranscriptionService` submits the audio for ASR.
+2. `MeetingTranscriptionService` submits the audio to `VibeVoice ASR`.
 3. The service parses structured ASR output instead of plain text only.
 4. The service resolves speaker labels for segments.
 5. `MeetingRecordStore` persists the meeting and its transcript segments.
@@ -258,7 +262,7 @@ Design implication:
 
 Implementation expectation:
 
-- Prefer an ASR backend or post-processing path that can yield speaker-aware segments.
+- `VibeVoice ASR` is the primary meeting-mode backend and is expected to yield long-form, timestamped, speaker-aware transcript output suitable for meetings.
 - If the backend cannot produce perfect labels initially, the UI still renders generic labels such as `Speaker 1`, `Speaker 2`, or `Unknown`.
 - Do not block the feature on perfect diarization accuracy.
 
@@ -416,6 +420,7 @@ Manual QA is required for:
 
 - Meeting Minutes is a separate product surface from voice-to-text input.
 - First version records audio only, not screen video.
+- First version uses `VibeVoice ASR` as the meeting transcription core and does not reuse the existing Whisper path for meetings.
 - First version includes speaker separation.
 - First version includes timeline playback.
 - First version includes meeting history.
