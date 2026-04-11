@@ -30,6 +30,16 @@ final class MeetingRecordStore: ObservableObject {
         try MeetingRecordStore(dbQueue: DatabaseQueue())
     }
 
+    static func inMemory(seed meetings: [MeetingRecord]) throws -> MeetingRecordStore {
+        let store = try MeetingRecordStore(dbQueue: DatabaseQueue())
+        for meeting in meetings {
+            try store.dbQueue.write { db in
+                try meeting.insert(db)
+            }
+        }
+        return store
+    }
+
     private init(dbQueue: DatabaseQueue) throws {
         self.dbQueue = dbQueue
         try setupDatabase()
@@ -92,6 +102,14 @@ final class MeetingRecordStore: ObservableObject {
             try MeetingTranscriptSegment
                 .filter(MeetingTranscriptSegment.Columns.meetingID == meetingID)
                 .order(MeetingTranscriptSegment.Columns.sequence.asc)
+                .fetchAll(db)
+        }
+    }
+
+    nonisolated func fetchMeetings() async throws -> [MeetingRecord] {
+        try await dbQueue.read { db in
+            try MeetingRecord
+                .order(MeetingRecord.Columns.createdAt.desc)
                 .fetchAll(db)
         }
     }

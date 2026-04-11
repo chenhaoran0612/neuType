@@ -300,6 +300,7 @@ struct ContentView: View {
     @State private var debouncedSearchText = ""
     @State private var showDeleteConfirmation = false
     @State private var searchTask: Task<Void, Never>? = nil
+    @State private var isMeetingSheetPresented = false
 
     private var currentShortcutDescription: String {
         let modifierKey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .rightOption
@@ -359,6 +360,11 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                         }
+
+                        Button("Meeting Minutes") {
+                            isMeetingSheetPresented = true
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(10)
                     .background(ThemePalette.panelSurface(colorScheme))
@@ -652,6 +658,10 @@ struct ContentView: View {
                 searchTask?.cancel()
                 viewModel.shouldClearSearch = false
             }
+        }
+        .sheet(isPresented: $isMeetingSheetPresented) {
+            MeetingRootView()
+                .frame(minWidth: 900, minHeight: 600)
         }
     }
 }
