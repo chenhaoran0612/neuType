@@ -1,15 +1,18 @@
 import AVFoundation
 import AppKit
 import Foundation
+import CoreGraphics
 
 enum Permission {
     case microphone
     case accessibility
+    case screenRecording
 }
 
 class PermissionsManager: ObservableObject {
     @Published var isMicrophonePermissionGranted = false
     @Published var isAccessibilityPermissionGranted = false
+    @Published var isScreenRecordingPermissionGranted = false
 
     private var permissionCheckTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
@@ -17,6 +20,7 @@ class PermissionsManager: ObservableObject {
     init() {
         checkMicrophonePermission()
         checkAccessibilityPermission()
+        checkScreenRecordingPermission()
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -73,6 +77,7 @@ class PermissionsManager: ObservableObject {
         permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkMicrophonePermission()
             self?.checkAccessibilityPermission()
+            self?.checkScreenRecordingPermission()
         }
     }
 
@@ -101,6 +106,19 @@ class PermissionsManager: ObservableObject {
         }
     }
 
+    func checkScreenRecordingPermission() {
+        let granted: Bool
+        if #available(macOS 10.15, *) {
+            granted = CGPreflightScreenCaptureAccess()
+        } else {
+            granted = true
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.isScreenRecordingPermissionGranted = granted
+        }
+    }
+
     func requestMicrophonePermissionOrOpenSystemPreferences() {
 
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
@@ -119,6 +137,22 @@ class PermissionsManager: ObservableObject {
         }
     }
 
+    func requestScreenRecordingPermissionOrOpenSystemPreferences() {
+        if #available(macOS 10.15, *) {
+            if !CGPreflightScreenCaptureAccess() {
+                _ = CGRequestScreenCaptureAccess()
+            } else {
+                isScreenRecordingPermissionGranted = true
+            }
+        } else {
+            isScreenRecordingPermissionGranted = true
+        }
+
+        if !isScreenRecordingPermissionGranted {
+            openSystemPreferences(for: .screenRecording)
+        }
+    }
+
     @objc private func accessibilityPermissionChanged() {
         checkAccessibilityPermission()
     }
@@ -131,6 +165,9 @@ class PermissionsManager: ObservableObject {
         case .accessibility:
             urlString =
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        case .screenRecording:
+            urlString =
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         }
 
         if let url = URL(string: urlString) {
