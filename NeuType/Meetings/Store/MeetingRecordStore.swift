@@ -95,4 +95,37 @@ final class MeetingRecordStore: ObservableObject {
                 .fetchAll(db)
         }
     }
+
+    nonisolated func updateTranscription(
+        meetingID: UUID,
+        fullText: String,
+        segments: [MeetingTranscriptionSegmentPayload]
+    ) async throws {
+        try await dbQueue.write { db in
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, [
+                    MeetingRecord.Columns.transcriptPreview.set(to: fullText),
+                    MeetingRecord.Columns.status.set(to: MeetingRecordStatus.completed.rawValue),
+                    MeetingRecord.Columns.progress.set(to: 1.0),
+                ])
+
+            try MeetingTranscriptSegment
+                .filter(MeetingTranscriptSegment.Columns.meetingID == meetingID)
+                .deleteAll(db)
+
+            for payload in segments {
+                let segment = MeetingTranscriptSegment(
+                    id: UUID(),
+                    meetingID: meetingID,
+                    sequence: payload.sequence,
+                    speakerLabel: payload.speakerLabel,
+                    startTime: payload.startTime,
+                    endTime: payload.endTime,
+                    text: payload.text
+                )
+                try segment.insert(db)
+            }
+        }
+    }
 }

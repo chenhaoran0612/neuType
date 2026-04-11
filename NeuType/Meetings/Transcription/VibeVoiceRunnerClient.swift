@@ -14,7 +14,11 @@ enum VibeVoiceRunnerError: LocalizedError {
     }
 }
 
-final class VibeVoiceRunnerClient {
+protocol VibeVoiceRunning {
+    func transcribe(audioURL: URL, hotwords: [String]) async throws -> MeetingTranscriptionResult
+}
+
+final class VibeVoiceRunnerClient: VibeVoiceRunning {
     private let processFactory: () -> Process
     private let decoder: JSONDecoder
 
