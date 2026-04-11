@@ -101,6 +101,15 @@ final class AppPreferences {
     @UserDefault(key: "llmModel", defaultValue: "openai/gpt-oss-20b")
     var llmModel: String
 
+    @UserDefault(key: "meetingVibeVoicePythonPath", defaultValue: "/usr/bin/python3")
+    var meetingVibeVoicePythonPath: String
+
+    @UserDefault(key: "meetingVibeVoiceRunnerPath", defaultValue: "Scripts/vibevoice_asr_runner.py")
+    var meetingVibeVoiceRunnerPath: String
+
+    @UserDefault(key: "meetingVibeVoiceModelID", defaultValue: "microsoft/VibeVoice-ASR-HF")
+    var meetingVibeVoiceModelID: String
+
     @OptionalUserDefault(key: "indicatorOriginX")
     var indicatorOriginX: Double?
 

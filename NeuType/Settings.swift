@@ -40,6 +40,18 @@ class SettingsViewModel: ObservableObject {
         didSet { AppPreferences.shared.llmOptimizationPrompt = llmOptimizationPrompt }
     }
 
+    @Published var meetingVibeVoicePythonPath: String {
+        didSet { AppPreferences.shared.meetingVibeVoicePythonPath = meetingVibeVoicePythonPath }
+    }
+
+    @Published var meetingVibeVoiceRunnerPath: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceRunnerPath = meetingVibeVoiceRunnerPath }
+    }
+
+    @Published var meetingVibeVoiceModelID: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceModelID = meetingVibeVoiceModelID }
+    }
+
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
     @Published var meetingShortcutError: String?
@@ -60,6 +72,9 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        meetingVibeVoicePythonPath = AppPreferences.shared.meetingVibeVoicePythonPath
+        meetingVibeVoiceRunnerPath = AppPreferences.shared.meetingVibeVoiceRunnerPath
+        meetingVibeVoiceModelID = AppPreferences.shared.meetingVibeVoiceModelID
         validateMeetingShortcut()
     }
 
@@ -257,6 +272,29 @@ private struct GeneralSettingsTabView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
                     Label("LLM API (OpenAI Compatible)", systemImage: "brain.head.profile")
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        LabeledInputField(
+                            title: "Python",
+                            placeholder: "/usr/bin/python3",
+                            text: $viewModel.meetingVibeVoicePythonPath
+                        )
+                        LabeledInputField(
+                            title: "Runner Script",
+                            placeholder: "Scripts/vibevoice_asr_runner.py",
+                            text: $viewModel.meetingVibeVoiceRunnerPath
+                        )
+                        LabeledInputField(
+                            title: "Model ID",
+                            placeholder: "microsoft/VibeVoice-ASR-HF",
+                            text: $viewModel.meetingVibeVoiceModelID
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("Meeting ASR (VibeVoice)", systemImage: "person.2.wave.2")
                 }
             }
             .padding(16)
