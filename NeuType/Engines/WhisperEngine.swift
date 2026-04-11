@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 private struct GroqTranscriptionResponse: Decodable {
@@ -101,6 +102,16 @@ class WhisperEngine: TranscriptionEngine {
 
     func getSupportedLanguages() -> [String] {
         LanguageUtil.availableLanguages
+    }
+
+    func makeTargetFormat(channelCount: AVAudioChannelCount) -> AVAudioFormat? {
+        guard channelCount > 0 else { return nil }
+        return AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: channelCount,
+            interleaved: false
+        )
     }
 
     private func makeMultipartBody(
