@@ -8,7 +8,18 @@ import SwiftUI
 
 extension KeyboardShortcuts.Name {
     static let toggleRecord = Self("toggleRecord", default: .init(.backtick, modifiers: .option))
+    static let toggleMeetingRecord = Self("toggleMeetingRecord", default: .init(.m, modifiers: [.option, .shift]))
     static let escape = Self("escape", default: .init(.escape))
+}
+
+struct MeetingShortcutValidator {
+    let dictationShortcut: KeyboardShortcuts.Shortcut?
+
+    func canUse(_ shortcut: KeyboardShortcuts.Shortcut?) -> Bool {
+        guard let shortcut else { return true }
+        guard let dictationShortcut else { return true }
+        return shortcut != dictationShortcut
+    }
 }
 
 class ShortcutManager {
@@ -70,6 +81,10 @@ class ShortcutManager {
             }
         }
         KeyboardShortcuts.disable(.escape)
+
+        KeyboardShortcuts.onKeyDown(for: .toggleMeetingRecord) {
+            RequestLogStore.log(.usage, "Meeting shortcut keyDown")
+        }
     }
     
     private func setupModifierKeyMonitor() {

@@ -1,5 +1,6 @@
 import Carbon
 import Foundation
+import KeyboardShortcuts
 import SwiftUI
 
 @MainActor
@@ -41,6 +42,7 @@ class SettingsViewModel: ObservableObject {
 
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
+    @Published var meetingShortcutError: String?
 
     @MainActor
     var filteredLogs: [RequestLogEntry] {
@@ -58,6 +60,7 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        validateMeetingShortcut()
     }
 
     func startIndicatorPositionAdjusting() {
@@ -69,6 +72,16 @@ class SettingsViewModel: ObservableObject {
         guard isAdjustingIndicatorPosition else { return }
         IndicatorWindowManager.shared.hide()
         isAdjustingIndicatorPosition = false
+    }
+
+    func validateMeetingShortcut() {
+        let validator = MeetingShortcutValidator(
+            dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord)
+        )
+        let meetingShortcut = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)
+        meetingShortcutError = validator.canUse(meetingShortcut)
+            ? nil
+            : "Meeting shortcut cannot match the dictation shortcut."
     }
 }
 
@@ -174,6 +187,29 @@ private struct GeneralSettingsTabView: View {
                             Text("Drag the bubble and close Settings to save.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Meeting shortcut")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            KeyboardShortcuts.Recorder(for: .toggleMeetingRecord)
+                                .onChange(of: KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)) { _, _ in
+                                    viewModel.validateMeetingShortcut()
+                                }
+
+                            if let meetingShortcutError = viewModel.meetingShortcutError {
+                                Text(meetingShortcutError)
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            } else {
+                                Text("Used only for Meeting Minutes recording.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
