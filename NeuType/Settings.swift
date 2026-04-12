@@ -64,6 +64,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     init() {
+        let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
         asrAPIKey = AppPreferences.shared.asrAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.asrAPIKey
@@ -72,9 +73,9 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
-        meetingVibeVoicePythonPath = AppPreferences.shared.meetingVibeVoicePythonPath
-        meetingVibeVoiceRunnerPath = AppPreferences.shared.meetingVibeVoiceRunnerPath
-        meetingVibeVoiceModelID = AppPreferences.shared.meetingVibeVoiceModelID
+        meetingVibeVoicePythonPath = meetingConfig.pythonPath
+        meetingVibeVoiceRunnerPath = meetingConfig.runnerPath
+        meetingVibeVoiceModelID = meetingConfig.modelID
         validateMeetingShortcut()
     }
 
@@ -276,6 +277,10 @@ private struct GeneralSettingsTabView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text("The configured Python environment must have VibeVoice dependencies installed, including torch and transformers with VibeVoice ASR support.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
                         LabeledInputField(
                             title: "Python",
                             placeholder: "/usr/bin/python3",

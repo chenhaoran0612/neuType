@@ -294,13 +294,13 @@ class ContentViewModel: ObservableObject {
 struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()
     @StateObject private var permissionsManager = PermissionsManager()
+    @EnvironmentObject private var meetingSession: MeetingSessionController
     @Environment(\.colorScheme) private var colorScheme
     @State private var isSettingsPresented = false
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var showDeleteConfirmation = false
     @State private var searchTask: Task<Void, Never>? = nil
-    @State private var isMeetingSheetPresented = false
 
     private var currentShortcutDescription: String {
         let modifierKey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .rightOption
@@ -329,10 +329,13 @@ struct ContentView: View {
     }
 
     var body: some View {
+        let permissionGate = AppPermissionGate(
+            isMicrophonePermissionGranted: permissionsManager.isMicrophonePermissionGranted,
+            isAccessibilityPermissionGranted: permissionsManager.isAccessibilityPermissionGranted
+        )
+
         VStack {
-            if !permissionsManager.isMicrophonePermissionGranted
-                || !permissionsManager.isAccessibilityPermissionGranted
-            {
+            if permissionGate.blocksMainInterface {
                 PermissionsView(permissionsManager: permissionsManager)
             } else {
                 VStack(spacing: 0) {
@@ -361,10 +364,6 @@ struct ContentView: View {
                             .buttonStyle(.plain)
                         }
 
-                        Button("Meeting Minutes") {
-                            isMeetingSheetPresented = true
-                        }
-                        .buttonStyle(.bordered)
                     }
                     .padding(10)
                     .background(ThemePalette.panelSurface(colorScheme))
@@ -627,8 +626,7 @@ struct ContentView: View {
             viewModel.loadInitialData()
         }
         .overlay {
-            let isPermissionsGranted = permissionsManager.isMicrophonePermissionGranted
-                && permissionsManager.isAccessibilityPermissionGranted
+            let isPermissionsGranted = !permissionGate.blocksMainInterface
 
             if viewModel.transcriptionService.isLoading && isPermissionsGranted {
                 ZStack {
@@ -651,6 +649,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
             isSettingsPresented = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openVoiceInput)) { _ in
+            meetingSession.dismiss()
+        }
         .onChange(of: viewModel.shouldClearSearch) { _, shouldClear in
             if shouldClear {
                 searchText = ""
@@ -659,9 +660,20 @@ struct ContentView: View {
                 viewModel.shouldClearSearch = false
             }
         }
-        .sheet(isPresented: $isMeetingSheetPresented) {
+        .sheet(isPresented: $meetingSession.isPresented, onDismiss: {
+            meetingSession.handleMeetingPageDismissed()
+        }) {
             MeetingRootView()
-                .frame(minWidth: 900, minHeight: 600)
+                .environmentObject(meetingSession)
+                .frame(minWidth: 1480, idealWidth: 1680, minHeight: 900, idealHeight: 980)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openMeetingMinutes)) { _ in
+            meetingSession.present()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleMeetingMinutesShortcut)) { _ in
+            Task {
+                await meetingSession.handleShortcut()
+            }
         }
     }
 }
@@ -1090,9 +1102,10 @@ struct TranscriptionView: View {
             }
             
             guard !Task.isCancelled else { return }
+            let result = attributedString
             
             await MainActor.run {
-                self.highlightedAttributedString = attributedString
+                self.highlightedAttributedString = result
             }
         }
     }

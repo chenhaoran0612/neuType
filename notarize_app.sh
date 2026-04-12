@@ -27,12 +27,6 @@ chmod +w ./build/libautocorrect_swift.dylib
 install_name_tool -id "@rpath/libautocorrect_swift.dylib" ./build/libautocorrect_swift.dylib
 codesign --force --sign "${CODE_SIGN_IDENTITY}" --timestamp ./build/libautocorrect_swift.dylib
 
-echo "Copying libomp.dylib..."
-cp /opt/homebrew/opt/libomp/lib/libomp.dylib ./build/libomp.dylib
-chmod +w ./build/libomp.dylib
-install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
-codesign --force --sign "${CODE_SIGN_IDENTITY}" --timestamp ./build/libomp.dylib
-
 xcodebuild \
   -scheme "NeuType" \
   -configuration Release \
@@ -44,6 +38,9 @@ xcodebuild \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   -derivedDataPath build \
   build | xcpretty --simple --color
+
+mkdir -p "${APP_PATH}/Contents/Resources/Scripts"
+cp ./Scripts/vibevoice_asr_runner.py "${APP_PATH}/Contents/Resources/Scripts/vibevoice_asr_runner.py"
 
 rm -f "${ZIP_PATH}"
 

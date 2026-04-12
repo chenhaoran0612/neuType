@@ -83,7 +83,11 @@ class ShortcutManager {
         KeyboardShortcuts.disable(.escape)
 
         KeyboardShortcuts.onKeyDown(for: .toggleMeetingRecord) {
-            RequestLogStore.log(.usage, "Meeting shortcut keyDown")
+            Task { @MainActor in
+                let shortcutDescription = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)?.description ?? "unconfigured"
+                RequestLogStore.log(.usage, "Meeting shortcut keyDown: \(shortcutDescription)")
+                NotificationCenter.default.post(name: .toggleMeetingMinutesShortcut, object: nil)
+            }
         }
     }
     

@@ -11,7 +11,7 @@ enum MeetingRecordStatus: String, Codable {
 struct MeetingRecord: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
     let id: UUID
     let createdAt: Date
-    let title: String
+    var title: String
     let audioFileName: String
     var transcriptPreview: String
     let duration: TimeInterval

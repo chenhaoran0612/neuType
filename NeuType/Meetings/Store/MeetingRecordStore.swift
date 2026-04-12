@@ -87,6 +87,7 @@ final class MeetingRecordStore: ObservableObject {
                 try segment.insert(db)
             }
         }
+        postMeetingRecordsDidChange()
     }
 
     nonisolated func fetchMeeting(id: UUID) async throws -> MeetingRecord? {
@@ -145,5 +146,46 @@ final class MeetingRecordStore: ObservableObject {
                 try segment.insert(db)
             }
         }
+        postMeetingRecordsDidChange()
+    }
+
+    nonisolated func updateMeetingTitle(
+        meetingID: UUID,
+        title: String
+    ) async throws {
+        try await dbQueue.write { db in
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, [
+                    MeetingRecord.Columns.title.set(to: title),
+                ])
+        }
+        postMeetingRecordsDidChange()
+    }
+
+    nonisolated func deleteMeeting(meetingID: UUID) async throws {
+        let audioFileName = try await dbQueue.write { db -> String? in
+            let audioFileName = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .fetchOne(db)?
+                .audioFileName
+
+            try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .deleteAll(db)
+
+            return audioFileName
+        }
+
+        if let audioFileName {
+            let audioURL = MeetingRecord.meetingsDirectory.appendingPathComponent(audioFileName)
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        postMeetingRecordsDidChange()
+    }
+
+    private nonisolated func postMeetingRecordsDidChange() {
+        NotificationCenter.default.post(name: .meetingRecordsDidChange, object: nil)
     }
 }

@@ -1,6 +1,10 @@
 import Foundation
 
-final class MeetingTranscriptionService {
+protocol MeetingTranscribing {
+    func transcribe(meetingID: UUID, audioURL: URL) async throws
+}
+
+final class MeetingTranscriptionService: MeetingTranscribing {
     private let runner: VibeVoiceRunning
     private let store: MeetingRecordStore
 

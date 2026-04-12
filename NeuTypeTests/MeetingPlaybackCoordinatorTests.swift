@@ -2,6 +2,7 @@ import XCTest
 @testable import NeuType
 
 final class MeetingPlaybackCoordinatorTests: XCTestCase {
+    @MainActor
     func testActiveSegmentMatchesPlaybackTime() {
         let segments = [
             MeetingTranscriptSegment.fixture(sequence: 0, startTime: 0, endTime: 2),

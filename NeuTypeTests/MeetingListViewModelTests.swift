@@ -13,6 +13,19 @@ final class MeetingListViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.meetings.first?.createdAt, newer.createdAt)
     }
+
+    @MainActor
+    func testDeleteMeetingRemovesItFromList() async throws {
+        let first = MeetingRecord.fixture(createdAt: Date(timeIntervalSince1970: 100), audioFileName: "first.wav")
+        let second = MeetingRecord.fixture(createdAt: Date(timeIntervalSince1970: 200), audioFileName: "second.wav")
+        let store = try MeetingRecordStore.inMemory(seed: [first, second])
+        let viewModel = MeetingListViewModel(store: store)
+
+        await viewModel.load()
+        await viewModel.deleteMeeting(id: second.id)
+
+        XCTAssertEqual(viewModel.meetings.map(\.id), [first.id])
+    }
 }
 
 private extension MeetingRecord {

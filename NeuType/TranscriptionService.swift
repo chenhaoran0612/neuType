@@ -40,7 +40,7 @@ class TranscriptionService: ObservableObject {
         isLoading = true
         
         Task.detached(priority: .userInitiated) {
-            let engine: TranscriptionEngine? = await WhisperEngine()
+            let engine: TranscriptionEngine? = WhisperEngine()
             
             do {
                 try await engine?.initialize()
@@ -117,10 +117,7 @@ class TranscriptionService: ObservableObject {
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             try Task.checkCancellation()
             
-            let cancelled = await MainActor.run {
-                guard let self = self else { return true }
-                return self.isCancelled
-            }
+            let cancelled = await self?.cancellationStatus() ?? true
             
             guard !cancelled else {
                 throw CancellationError()
@@ -130,16 +127,9 @@ class TranscriptionService: ObservableObject {
             
             try Task.checkCancellation()
             
-            let finalCancelled = await MainActor.run {
-                guard let self = self else { return true }
-                return self.isCancelled
-            }
+            let finalCancelled = await self?.cancellationStatus() ?? true
             
-            await MainActor.run {
-                guard let self = self, !self.isCancelled else { return }
-                self.transcribedText = result
-                self.progress = 1.0
-            }
+            await self?.applyCompletedTranscription(result)
             
             guard !finalCancelled else {
                 throw CancellationError()
@@ -160,6 +150,16 @@ class TranscriptionService: ObservableObject {
             }
             throw TranscriptionError.processingFailed
         }
+    }
+
+    private func cancellationStatus() -> Bool {
+        isCancelled
+    }
+
+    private func applyCompletedTranscription(_ result: String) {
+        guard !isCancelled else { return }
+        transcribedText = result
+        progress = 1.0
     }
 }
 

@@ -21,24 +21,36 @@ protocol VibeVoiceRunning {
 final class VibeVoiceRunnerClient: VibeVoiceRunning {
     private let processFactory: () -> Process
     private let decoder: JSONDecoder
+    private let configProvider: MeetingVibeVoiceConfigProviding
+    private let configureProcess: (Process) -> Void
 
     init(
         processFactory: @escaping () -> Process = { Process() },
-        decoder: JSONDecoder = JSONDecoder()
+        decoder: JSONDecoder = JSONDecoder(),
+        configProvider: MeetingVibeVoiceConfigProviding = AppPreferences.shared,
+        configureProcess: @escaping (Process) -> Void = { _ in }
     ) {
         self.processFactory = processFactory
         self.decoder = decoder
+        self.configProvider = configProvider
+        self.configureProcess = configureProcess
     }
 
     func transcribe(audioURL: URL, hotwords: [String] = []) async throws -> MeetingTranscriptionResult {
-        let scriptPath = resolvedRunnerScriptPath()
+        let config = configProvider.meetingVibeVoiceConfig
+        let scriptPath = config.resolvedRunnerScriptPath()
         guard FileManager.default.fileExists(atPath: scriptPath) else {
             throw VibeVoiceRunnerError.invalidRunnerPath(scriptPath)
         }
 
         let process = processFactory()
-        process.executableURL = URL(fileURLWithPath: AppPreferences.shared.meetingVibeVoicePythonPath)
+        process.executableURL = URL(fileURLWithPath: config.pythonPath)
         process.arguments = [scriptPath]
+        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        configureProcess(process)
+        process.environment = Self.runnerEnvironment(
+            base: process.environment ?? ProcessInfo.processInfo.environment
+        )
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -51,7 +63,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
 
         let request = VibeVoiceRunnerRequest(
             audioPath: audioURL.path,
-            modelID: AppPreferences.shared.meetingVibeVoiceModelID,
+            modelID: config.modelID,
             hotwords: hotwords
         )
         let requestData = try JSONEncoder().encode(request)
@@ -64,11 +76,32 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
         guard process.terminationStatus == 0 else {
-            let message = String(data: errorData, encoding: .utf8) ?? "Unknown VibeVoice runner failure"
-            throw VibeVoiceRunnerError.processFailed(message)
+            throw VibeVoiceRunnerError.processFailed(Self.failureMessage(from: errorData))
         }
 
         return try Self.decodeResult(from: outputData, decoder: decoder)
+    }
+
+    static func runnerEnvironment(base: [String: String]) -> [String: String] {
+        var environment = base
+        environment["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        environment["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+        environment["TOKENIZERS_PARALLELISM"] = "false"
+        environment["PYTHONWARNINGS"] = "ignore"
+        return environment
+    }
+
+    static func failureMessage(from data: Data) -> String {
+        guard let stderrOutput = String(data: data, encoding: .utf8) else {
+            return "Unknown VibeVoice runner failure"
+        }
+
+        let lines = stderrOutput
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return lines.last ?? "Unknown VibeVoice runner failure"
     }
 
     static func decodeResult(
@@ -76,19 +109,6 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
         decoder: JSONDecoder = JSONDecoder()
     ) throws -> MeetingTranscriptionResult {
         try decoder.decode(MeetingTranscriptionResult.self, from: data)
-    }
-
-    private func resolvedRunnerScriptPath() -> String {
-        let configured = AppPreferences.shared.meetingVibeVoiceRunnerPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !configured.isEmpty else { return "" }
-
-        if configured.hasPrefix("/") {
-            return configured
-        }
-
-        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(configured)
-            .path
     }
 }
 

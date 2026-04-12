@@ -24,13 +24,6 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-echo "Copying libomp.dylib..."
-rm -f ./build/libomp.dylib
-cp /opt/homebrew/opt/libomp/lib/libomp.dylib ./build/libomp.dylib
-chmod u+w ./build/libomp.dylib
-install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
-codesign --force --sign - ./build/libomp.dylib
-
 # Build the app
 echo "Building NeuType..."
 BUILD_OUTPUT=$(xcodebuild -scheme NeuType -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'generic/platform=macOS' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO OTHER_CODE_SIGN_FLAGS="--entitlements NeuType/NeuType.entitlements" build 2>&1)
@@ -45,6 +38,9 @@ fi
 
 # Check if build output contains BUILD FAILED or if the command failed
 if [[ $? -eq 0 ]] && [[ ! "$BUILD_OUTPUT" =~ "BUILD FAILED" ]]; then
+    APP_RESOURCES_DIR="./build/Build/Products/Debug/NeuType.app/Contents/Resources"
+    mkdir -p "${APP_RESOURCES_DIR}/Scripts"
+    cp ./Scripts/vibevoice_asr_runner.py "${APP_RESOURCES_DIR}/Scripts/vibevoice_asr_runner.py"
     echo "Building successful!"
     if $JUST_BUILD; then
         exit 0
