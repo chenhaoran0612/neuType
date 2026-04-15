@@ -294,14 +294,15 @@ class ContentViewModel: ObservableObject {
 struct ContentView: View {
     @StateObject private var viewModel = ContentViewModel()
     @StateObject private var permissionsManager = PermissionsManager()
+    @StateObject private var microphoneService = MicrophoneService.shared
     @EnvironmentObject private var meetingSession: MeetingSessionController
+    @EnvironmentObject private var appNavigation: AppNavigationController
     @Environment(\.colorScheme) private var colorScheme
     @State private var isSettingsPresented = false
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var showDeleteConfirmation = false
     @State private var searchTask: Task<Void, Never>? = nil
-
     private var currentShortcutDescription: String {
         let modifierKey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .rightOption
         return modifierKey.shortSymbol
@@ -331,16 +332,231 @@ struct ContentView: View {
     var body: some View {
         let permissionGate = AppPermissionGate(
             isMicrophonePermissionGranted: permissionsManager.isMicrophonePermissionGranted,
-            isAccessibilityPermissionGranted: permissionsManager.isAccessibilityPermissionGranted
+            isAccessibilityPermissionGranted: permissionsManager.isAccessibilityPermissionGranted,
+            isScreenRecordingPermissionGranted: permissionsManager.isScreenRecordingPermissionGranted,
+            screenRecordingPermissionState: permissionsManager.screenRecordingPermissionState
         )
 
         VStack {
             if permissionGate.blocksMainInterface {
                 PermissionsView(permissionsManager: permissionsManager)
             } else {
-                VStack(spacing: 0) {
+                if appNavigation.selectedWorkspace == .home {
+                    homeSelectionView
+                } else {
+                    voiceInputWorkspace
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ThemePalette.windowBackground(colorScheme))
+        .onAppear {
+            viewModel.loadInitialData()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: RecordingStore.recordingProgressDidUpdateNotification)) { notification in
+            guard let userInfo = notification.userInfo,
+                  let id = userInfo["id"] as? UUID,
+                  let progress = userInfo["progress"] as? Float,
+                  let status = userInfo["status"] as? RecordingStatus else { return }
+            
+            let transcription = userInfo["transcription"] as? String
+            let isRegeneration = userInfo["isRegeneration"] as? Bool
+            
+            viewModel.handleProgressUpdate(
+                id: id,
+                transcription: transcription,
+                progress: progress,
+                status: status,
+                isRegeneration: isRegeneration
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: RecordingStore.recordingsDidUpdateNotification)) { _ in
+            viewModel.loadInitialData()
+        }
+        .overlay {
+            let isPermissionsGranted = !permissionGate.blocksMainInterface
+
+            if viewModel.transcriptionService.isLoading && isPermissionsGranted {
+                ZStack {
+                    Color.black.opacity(0.3)
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                        Text("Loading Whisper Model...")
+                            .foregroundColor(.white)
+                            .font(.headline)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+        }
+        .fileDropHandler()
+        .sheet(isPresented: $isSettingsPresented) {
+            SettingsView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            isSettingsPresented = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openVoiceInput)) { _ in
+            MeetingLog.info("Main window switch to voice input workspace")
+            appNavigation.openVoiceInput()
+            meetingSession.dismiss()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .returnToHome)) { _ in
+            MeetingLog.info("Main window switch to home workspace")
+            appNavigation.returnHome()
+        }
+        .onChange(of: viewModel.shouldClearSearch) { _, shouldClear in
+            if shouldClear {
+                searchText = ""
+                debouncedSearchText = ""
+                searchTask?.cancel()
+                viewModel.shouldClearSearch = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openMeetingMinutes)) { _ in
+            MeetingLog.info("Open meeting history workspace")
+            meetingSession.present()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleMeetingMinutesShortcut)) { _ in
+            Task {
+                await meetingSession.handleShortcut()
+            }
+        }
+    }
+
+    private var homeSelectionView: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("NeuType")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                Text("选择你要使用的工作区。")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 30)
+
+            VStack(spacing: 16) {
+                workspaceCard(
+                    title: "音频输入",
+                    subtitle: "录音、拖入音频、查看语音输入历史。",
+                    iconName: "waveform.badge.mic",
+                    accent: Color(red: 0.16, green: 0.47, blue: 0.93)
+                ) {
+                    MeetingLog.info("Home workspace selected voice input")
+                    appNavigation.openVoiceInput()
+                }
+
+                workspaceCard(
+                    title: "会议记录",
+                    subtitle: "录制会议、导入音频、查看文字记录与播放结果。",
+                    iconName: "person.2.wave.2.fill",
+                    accent: Color(red: 0.11, green: 0.68, blue: 0.78)
+                ) {
+                    MeetingLog.info("Home workspace selected meeting history")
+                    meetingSession.present()
+                }
+            }
+            .padding(.horizontal, 20)
+
+            settingsPanel
+                .padding(.horizontal, 20)
+
+            Spacer()
+        }
+    }
+
+    private var settingsPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("设置与设备")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Menu {
+                    if microphoneService.availableMicrophones.isEmpty {
+                        Text("没有可用麦克风")
+                    } else {
+                        microphoneMenuSection(
+                            microphones: microphoneService.availableMicrophones.filter(\.isBuiltIn)
+                        )
+
+                        let external = microphoneService.availableMicrophones.filter { !$0.isBuiltIn }
+                        if !microphoneService.availableMicrophones.filter(\.isBuiltIn).isEmpty && !external.isEmpty {
+                            Divider()
+                        }
+                        microphoneMenuSection(microphones: external)
+                    }
+                } label: {
+                    settingsCard(
+                        title: "麦克风",
+                        subtitle: microphoneService.currentMicrophone?.displayName ?? "选择输入设备",
+                        systemImage: "mic.fill"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    isSettingsPresented = true
+                } label: {
+                    settingsCard(
+                        title: "授权",
+                        subtitle: permissionsSummaryText,
+                        systemImage: permissionsManager.screenRecordingPermissionState == .needsRelaunch
+                            ? "arrow.clockwise.circle.fill"
+                            : "checkmark.shield.fill"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    isSettingsPresented = true
+                } label: {
+                    settingsCard(
+                        title: "设置",
+                        subtitle: "快捷键、模型与日志",
+                        systemImage: "gearshape.fill"
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var permissionsSummaryText: String {
+        if permissionsManager.screenRecordingPermissionState == .needsRelaunch {
+            return "屏幕录制需重启生效"
+        }
+
+        let grantedCount = [
+            permissionsManager.isMicrophonePermissionGranted,
+            permissionsManager.isAccessibilityPermissionGranted,
+            permissionsManager.isScreenRecordingPermissionGranted
+        ]
+        .filter { $0 }
+        .count
+
+        return "\(grantedCount)/3 已授权"
+    }
+
+    private var voiceInputWorkspace: some View {
+        VStack(spacing: 0) {
                     // Search bar
                     HStack {
+                        Button {
+                            RequestLogStore.log(.usage, "Voice Input: returned home via workspace button")
+                            appNavigation.returnHome()
+                        } label: {
+                            Image(systemName: "square.grid.2x2")
+                                .foregroundColor(.secondary)
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .help("返回主页")
+
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.secondary)
 
@@ -598,88 +814,205 @@ struct ContentView: View {
                     }
                     .padding()
                 }
-            }
-        }
-        .frame(minWidth: 400, idealWidth: 400)
-        .background(ThemePalette.windowBackground(colorScheme))
-        .onAppear {
-            viewModel.loadInitialData()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: RecordingStore.recordingProgressDidUpdateNotification)) { notification in
-            guard let userInfo = notification.userInfo,
-                  let id = userInfo["id"] as? UUID,
-                  let progress = userInfo["progress"] as? Float,
-                  let status = userInfo["status"] as? RecordingStatus else { return }
-            
-            let transcription = userInfo["transcription"] as? String
-            let isRegeneration = userInfo["isRegeneration"] as? Bool
-            
-            viewModel.handleProgressUpdate(
-                id: id,
-                transcription: transcription,
-                progress: progress,
-                status: status,
-                isRegeneration: isRegeneration
-            )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: RecordingStore.recordingsDidUpdateNotification)) { _ in
-            viewModel.loadInitialData()
-        }
-        .overlay {
-            let isPermissionsGranted = !permissionGate.blocksMainInterface
+    }
 
-            if viewModel.transcriptionService.isLoading && isPermissionsGranted {
+    private func workspaceCard(
+        title: String,
+        subtitle: String,
+        iconName: String,
+        accent: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 16) {
                 ZStack {
-                    Color.black.opacity(0.3)
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                        Text("Loading Whisper Model...")
-                            .foregroundColor(.white)
-                            .font(.headline)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(accent.opacity(0.12))
+                        .frame(width: 54, height: 54)
+
+                    Image(systemName: iconName)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(accent)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.primary)
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                }
+
+                HStack {
+                    Text("打开")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(accent)
+            }
+            .frame(maxWidth: .infinity, minHeight: 176, alignment: .leading)
+            .padding(22)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(ThemePalette.cardBackground(colorScheme))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(ThemePalette.cardBorder(colorScheme), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func microphoneMenuSection(microphones: [MicrophoneService.AudioDevice]) -> some View {
+        ForEach(microphones) { microphone in
+            Button {
+                microphoneService.selectMicrophone(microphone)
+            } label: {
+                HStack {
+                    Text(microphone.displayName)
+                    Spacer()
+                    if microphoneService.currentMicrophone?.id == microphone.id {
+                        Image(systemName: "checkmark")
                     }
                 }
-                .ignoresSafeArea()
             }
         }
-        .fileDropHandler()
-        .sheet(isPresented: $isSettingsPresented) {
-            SettingsView()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-            isSettingsPresented = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openVoiceInput)) { _ in
-            meetingSession.dismiss()
-        }
-        .onChange(of: viewModel.shouldClearSearch) { _, shouldClear in
-            if shouldClear {
-                searchText = ""
-                debouncedSearchText = ""
-                searchTask?.cancel()
-                viewModel.shouldClearSearch = false
+    }
+
+    private func settingsCard(title: String, subtitle: String, systemImage: String) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.045))
+                    .frame(width: 40, height: 40)
+
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
             }
-        }
-        .sheet(isPresented: $meetingSession.isPresented, onDismiss: {
-            meetingSession.handleMeetingPageDismissed()
-        }) {
-            MeetingRootView()
-                .environmentObject(meetingSession)
-                .frame(minWidth: 1480, idealWidth: 1680, minHeight: 900, idealHeight: 980)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openMeetingMinutes)) { _ in
-            meetingSession.present()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleMeetingMinutesShortcut)) { _ in
-            Task {
-                await meetingSession.handleShortcut()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text(subtitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(ThemePalette.cardBackground(colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(ThemePalette.cardBorder(colorScheme), lineWidth: 1)
+        )
     }
 }
 
 struct PermissionsView: View {
     @ObservedObject var permissionsManager: PermissionsManager
+
+    struct Item: Identifiable, Equatable {
+        let id: Permission
+        let isGranted: Bool
+        let title: String
+        let description: String
+        let buttonTitle: String?
+        let action: () -> Void
+
+        static func == (lhs: Item, rhs: Item) -> Bool {
+            lhs.id == rhs.id &&
+            lhs.isGranted == rhs.isGranted &&
+            lhs.title == rhs.title &&
+            lhs.description == rhs.description &&
+            lhs.buttonTitle == rhs.buttonTitle
+        }
+    }
+
+    static func items(for permissionsManager: PermissionsManager) -> [Item] {
+        [
+            Item(
+                id: .microphone,
+                isGranted: permissionsManager.isMicrophonePermissionGranted,
+                title: "Microphone Access",
+                description: "Required for audio recording",
+                buttonTitle: permissionsManager.isMicrophonePermissionGranted ? nil : "Grant Access",
+                action: {
+                    permissionsManager.requestMicrophonePermissionOrOpenSystemPreferences()
+                }
+            ),
+            Item(
+                id: .accessibility,
+                isGranted: permissionsManager.isAccessibilityPermissionGranted,
+                title: "Accessibility Access",
+                description: "Required for global keyboard shortcuts",
+                buttonTitle: permissionsManager.isAccessibilityPermissionGranted ? nil : "Grant Access",
+                action: {
+                    permissionsManager.openSystemPreferences(for: .accessibility)
+                }
+            ),
+            Item(
+                id: .screenRecording,
+                isGranted: permissionsManager.isScreenRecordingPermissionGranted,
+                title: "Screen Recording Access",
+                description: screenRecordingDescription(for: permissionsManager),
+                buttonTitle: screenRecordingButtonTitle(for: permissionsManager),
+                action: {
+                    switch permissionsManager.screenRecordingPermissionState {
+                    case .granted:
+                        break
+                    case .needsAuthorization:
+                        permissionsManager.requestScreenRecordingPermissionOrOpenSystemPreferences()
+                    case .needsRelaunch:
+                        permissionsManager.relaunchApplication()
+                    }
+                }
+            )
+        ]
+    }
+
+    static func screenRecordingDescription(for permissionsManager: PermissionsManager) -> String {
+        switch permissionsManager.screenRecordingPermissionState {
+        case .granted:
+            return "Required for meeting recording with system audio"
+        case .needsAuthorization:
+            return "Required for meeting recording with system audio"
+        case .needsRelaunch:
+            return "Access was granted in System Settings. Relaunch NeuType to apply it."
+        }
+    }
+
+    static func screenRecordingButtonTitle(for permissionsManager: PermissionsManager) -> String? {
+        switch permissionsManager.screenRecordingPermissionState {
+        case .granted:
+            return nil
+        case .needsAuthorization:
+            return "Grant Access"
+        case .needsRelaunch:
+            return "Relaunch"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -687,21 +1020,15 @@ struct PermissionsView: View {
                 .font(.title)
                 .padding()
 
-            PermissionRow(
-                isGranted: permissionsManager.isMicrophonePermissionGranted,
-                title: "Microphone Access",
-                description: "Required for audio recording",
-                action: {
-                    permissionsManager.requestMicrophonePermissionOrOpenSystemPreferences()
-                }
-            )
-
-            PermissionRow(
-                isGranted: permissionsManager.isAccessibilityPermissionGranted,
-                title: "Accessibility Access",
-                description: "Required for global keyboard shortcuts",
-                action: { permissionsManager.openSystemPreferences(for: .accessibility) }
-            )
+            ForEach(Self.items(for: permissionsManager)) { item in
+                PermissionRow(
+                    isGranted: item.isGranted,
+                    title: item.title,
+                    description: item.description,
+                    buttonTitle: item.buttonTitle,
+                    action: item.action
+                )
+            }
 
             Spacer()
         }
@@ -713,6 +1040,7 @@ struct PermissionRow: View {
     let isGranted: Bool
     let title: String
     let description: String
+    let buttonTitle: String?
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -727,8 +1055,8 @@ struct PermissionRow: View {
 
                 Spacer()
 
-                if !isGranted {
-                    Button("Grant Access") {
+                if let buttonTitle {
+                    Button(buttonTitle) {
                         action()
                     }
                     .buttonStyle(.borderedProminent)

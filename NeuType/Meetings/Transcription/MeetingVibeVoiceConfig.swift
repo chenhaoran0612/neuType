@@ -1,33 +1,45 @@
 import Foundation
 
 struct MeetingVibeVoiceConfig: Equatable {
-    let pythonPath: String
-    let runnerPath: String
-    let modelID: String
+    let baseURL: String
+    let apiPrefix: String
+    let contextInfo: String
+    let maxNewTokens: Int
+    let temperature: Double
+    let topP: Double
+    let doSample: Bool
+    let repetitionPenalty: Double
 
-    func resolvedRunnerScriptPath(
-        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
-        bundleResourcePath: String? = Bundle.main.resourcePath
-    ) -> String {
-        let trimmedRunnerPath = runnerPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedRunnerPath.isEmpty else { return "" }
+    func endpointURL(path: String) -> URL? {
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseURL.isEmpty else { return nil }
 
-        if trimmedRunnerPath.hasPrefix("/") {
-            return trimmedRunnerPath
-        }
+        let normalizedBase = trimmedBaseURL.hasSuffix("/") ? trimmedBaseURL : "\(trimmedBaseURL)/"
+        let normalizedPrefix = apiPrefix
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        if let bundleResourcePath {
-            let bundledPath = URL(fileURLWithPath: bundleResourcePath)
-                .appendingPathComponent(trimmedRunnerPath)
-                .path
-            if FileManager.default.fileExists(atPath: bundledPath) {
-                return bundledPath
-            }
-        }
+        let fullPath = normalizedPrefix.isEmpty
+            ? normalizedPath
+            : "\(normalizedPrefix)/\(normalizedPath)"
 
-        return URL(fileURLWithPath: currentDirectoryPath)
-            .appendingPathComponent(trimmedRunnerPath)
-            .path
+        return URL(string: normalizedBase)?.appending(path: fullPath)
+    }
+
+    func combinedContextInfo(hotwords: [String]) -> String {
+        let configuredLines = contextInfo
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let merged = (configuredLines + hotwords)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var seen = Set<String>()
+        let unique = merged.filter { seen.insert($0).inserted }
+        return unique.joined(separator: "\n")
     }
 }
 
@@ -38,9 +50,14 @@ protocol MeetingVibeVoiceConfigProviding {
 extension AppPreferences: MeetingVibeVoiceConfigProviding {
     var meetingVibeVoiceConfig: MeetingVibeVoiceConfig {
         MeetingVibeVoiceConfig(
-            pythonPath: meetingVibeVoicePythonPath.trimmingCharacters(in: .whitespacesAndNewlines),
-            runnerPath: meetingVibeVoiceRunnerPath,
-            modelID: meetingVibeVoiceModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            baseURL: meetingVibeVoiceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            apiPrefix: meetingVibeVoiceAPIPrefix.trimmingCharacters(in: .whitespacesAndNewlines),
+            contextInfo: meetingVibeVoiceContextInfo,
+            maxNewTokens: meetingVibeVoiceMaxNewTokens,
+            temperature: meetingVibeVoiceTemperature,
+            topP: meetingVibeVoiceTopP,
+            doSample: meetingVibeVoiceDoSample,
+            repetitionPenalty: meetingVibeVoiceRepetitionPenalty
         )
     }
 }

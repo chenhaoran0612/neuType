@@ -6,6 +6,7 @@ final class MeetingSessionControllerTests: XCTestCase {
     func testShortcutStartsRecordingWithoutPresentingMeetingPage() async {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
         let recorder = ShortcutStubMeetingRecorder()
         let viewModel = MeetingRecorderViewModel(
             permissions: ShortcutStubMeetingPermissions(microphoneGranted: true, screenGranted: true),
@@ -14,7 +15,8 @@ final class MeetingSessionControllerTests: XCTestCase {
         let controller = MeetingSessionController(
             recorderViewModel: viewModel,
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
 
         await controller.handleShortcut()
@@ -31,10 +33,12 @@ final class MeetingSessionControllerTests: XCTestCase {
     func testShortcutDuringRecordingShowsStopConfirmationInsteadOfPresentingPage() async {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
         controller.handleRecorderStateDidChange(.recording)
         controller.handleMeetingPageDismissed()
@@ -52,10 +56,12 @@ final class MeetingSessionControllerTests: XCTestCase {
         let eventRecorder = EventRecorder()
         let overlayController = StubMeetingOverlayController(eventRecorder: eventRecorder)
         let windowController = StubMeetingMainWindowController(eventRecorder: eventRecorder)
+        let meetingWindowController = StubMeetingHistoryWindowController(eventRecorder: eventRecorder)
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
         controller.present()
 
@@ -70,7 +76,8 @@ final class MeetingSessionControllerTests: XCTestCase {
 
         XCTAssertEqual(windowController.hideCalls, 1)
         XCTAssertEqual(overlayController.events, [.showRecordingBar])
-        XCTAssertEqual(Array(eventRecorder.events.suffix(2)), [
+        XCTAssertEqual(Array(eventRecorder.events.suffix(3)), [
+            "meetingWindow.hide",
             "overlay.showRecordingBar",
             "window.hide"
         ])
@@ -80,10 +87,12 @@ final class MeetingSessionControllerTests: XCTestCase {
     func testRequestStopConfirmationSwitchesToConfirmationOverlay() {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
         controller.present()
         controller.handleRecorderStateDidChange(.recording)
@@ -102,10 +111,12 @@ final class MeetingSessionControllerTests: XCTestCase {
     func testContinueMeetingReturnsToRecordingOverlay() {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
         controller.present()
         controller.handleRecorderStateDidChange(.recording)
@@ -122,40 +133,15 @@ final class MeetingSessionControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testRecordingLimitShowsStopConfirmationAndBlocksContinue() async {
-        let overlayController = StubMeetingOverlayController()
-        let windowController = StubMeetingMainWindowController()
-        let recorder = ShortcutStubMeetingRecorder()
-        let viewModel = MeetingRecorderViewModel(
-            permissions: ShortcutStubMeetingPermissions(microphoneGranted: true, screenGranted: true),
-            recorder: recorder
-        )
-        let controller = MeetingSessionController(
-            recorderViewModel: viewModel,
-            overlayController: overlayController,
-            mainWindowController: windowController
-        )
-
-        await controller.handleShortcut()
-        viewModel.handleRecordingElapsedTime(3600)
-        await Task.yield()
-
-        XCTAssertEqual(controller.overlayState, .stopConfirmation)
-        XCTAssertEqual(controller.stopConfirmationReason, .timeLimitReached)
-
-        controller.continueMeetingRecording()
-
-        XCTAssertEqual(controller.overlayState, .stopConfirmation)
-    }
-
-    @MainActor
     func testCompletedStateShowsMainPageAndHidesOverlay() {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
-            mainWindowController: windowController
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
         )
         let meetingID = UUID()
         controller.present()
@@ -167,7 +153,8 @@ final class MeetingSessionControllerTests: XCTestCase {
         XCTAssertTrue(controller.isPresented)
         XCTAssertEqual(controller.overlayState, .hidden)
         XCTAssertEqual(controller.lastCompletedMeetingID, meetingID)
-        XCTAssertEqual(windowController.showCalls, 2)
+        XCTAssertEqual(windowController.showCalls, 0)
+        XCTAssertEqual(meetingWindowController.showCalls, 2)
         XCTAssertEqual(
             overlayController.events,
             [.showRecordingBar, .hideOverlay]
@@ -175,8 +162,13 @@ final class MeetingSessionControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testPresentDoesNotPublishShortcutToggle() {
-        let controller = MeetingSessionController()
+    func testPresentShowsMeetingWindow() {
+        let controller = MeetingSessionController(
+            recorderViewModel: MeetingRecorderViewModel(),
+            overlayController: StubMeetingOverlayController(),
+            mainWindowController: StubMeetingMainWindowController(),
+            meetingWindowController: StubMeetingHistoryWindowController()
+        )
 
         controller.present()
 
@@ -184,13 +176,39 @@ final class MeetingSessionControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testDismissHidesMeetingSheet() {
-        let controller = MeetingSessionController()
+    func testDismissHidesMeetingWindow() {
+        let meetingWindowController = StubMeetingHistoryWindowController()
+        let controller = MeetingSessionController(
+            recorderViewModel: MeetingRecorderViewModel(),
+            overlayController: StubMeetingOverlayController(),
+            mainWindowController: StubMeetingMainWindowController(),
+            meetingWindowController: meetingWindowController
+        )
         controller.present()
 
         controller.dismiss()
 
         XCTAssertFalse(controller.isPresented)
+        XCTAssertEqual(meetingWindowController.hideCalls, 1)
+    }
+
+    @MainActor
+    func testDismissToHomeShowsMainWindowAndHidesMeetingWindow() {
+        let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
+        let controller = MeetingSessionController(
+            recorderViewModel: MeetingRecorderViewModel(),
+            overlayController: StubMeetingOverlayController(),
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController
+        )
+        controller.present()
+
+        controller.dismissToHome()
+
+        XCTAssertFalse(controller.isPresented)
+        XCTAssertEqual(meetingWindowController.hideCalls, 1)
+        XCTAssertEqual(windowController.showCalls, 1)
     }
 }
 
@@ -243,6 +261,27 @@ private final class StubMeetingMainWindowController: MeetingMainWindowControllin
     func hideMainWindow() {
         hideCalls += 1
         eventRecorder?.events.append("window.hide")
+    }
+}
+
+@MainActor
+private final class StubMeetingHistoryWindowController: MeetingHistoryWindowControlling {
+    private(set) var showCalls = 0
+    private(set) var hideCalls = 0
+    private let eventRecorder: EventRecorder?
+
+    init(eventRecorder: EventRecorder? = nil) {
+        self.eventRecorder = eventRecorder
+    }
+
+    func showWindow(sessionController: MeetingSessionController) {
+        showCalls += 1
+        eventRecorder?.events.append("meetingWindow.show")
+    }
+
+    func hideWindow() {
+        hideCalls += 1
+        eventRecorder?.events.append("meetingWindow.hide")
     }
 }
 

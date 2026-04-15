@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import KeyboardShortcuts
 
@@ -21,34 +22,19 @@ struct MeetingRootView: View {
                 containerHeight: geometry.size.height
             )
 
-            ZStack(alignment: .topTrailing) {
-                HSplitView {
-                    sidebar(layout: layout)
-                        .frame(
-                            minWidth: layout.sidebarWidth,
-                            idealWidth: layout.sidebarWidth,
-                            maxWidth: layout.sidebarWidth
-                        )
+            HSplitView {
+                sidebar(layout: layout)
+                    .frame(
+                        minWidth: layout.sidebarWidth,
+                        idealWidth: layout.sidebarWidth,
+                        maxWidth: layout.sidebarWidth
+                    )
 
-                    detailArea(layout: layout)
-                        .frame(minWidth: 720, maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(NSColor.windowBackgroundColor))
-
-                Button {
-                    meetingSession.dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .padding(.top, 22)
-                .padding(.trailing, 22)
+                detailArea(layout: layout)
+                    .frame(minWidth: 720, maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.windowBackgroundColor))
         }
         .task {
             await listViewModel.load()
@@ -63,18 +49,35 @@ struct MeetingRootView: View {
     }
 
     private func sidebar(layout: MeetingWorkspaceLayout) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("会议记录")
-                    .font(.system(size: layout.sidebarTitleFontSize, weight: .bold))
-                Text("独立查看会议录音、文字记录，以及后续的结构化结果。")
-                    .font(.system(size: layout.sidebarBodyFontSize, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("会议记录")
+                                .font(.system(size: layout.sidebarTitleFontSize, weight: .bold))
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("全部会议")
+                            Text("独立查看会议录音、文字记录，以及后续的结构化结果。")
+                                .font(.system(size: layout.sidebarBodyFontSize, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        Button {
+                            importAudio()
+                        } label: {
+                            Label("导入音频", systemImage: "square.and.arrow.down")
+                                .font(.system(size: layout.sidebarSectionTitleFontSize, weight: .semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("全部会议")
                     .font(.system(size: layout.sidebarSectionTitleFontSize, weight: .semibold))
                 MeetingListView(
                     viewModel: listViewModel,
@@ -145,6 +148,27 @@ struct MeetingRootView: View {
             await listViewModel.deleteMeeting(id: deletedID)
             await MainActor.run {
                 syncSelection()
+            }
+        }
+    }
+
+    private func importAudio() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.wav, .mp3, .mpeg4Audio]
+
+        if panel.runModal() == .OK, let sourceURL = panel.url {
+            Task {
+                do {
+                    let meetingID = try await listViewModel.importAudio(from: sourceURL)
+                    await MainActor.run {
+                        selectedMeetingID = meetingID
+                    }
+                } catch {
+                    MeetingLog.error("Import audio failed: \(error.localizedDescription)")
+                }
             }
         }
     }

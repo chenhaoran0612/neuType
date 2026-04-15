@@ -122,3 +122,5 @@ default.profraw
 .cursorrules
 OpenSuperWhisper.dmg.sha256
 dev_config.json
+.neux-ai-dev/
+build-signed-test/

@@ -19,7 +19,26 @@
 	<string>AppIcon.icns</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>workspace.featurize.cn</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>NeuType needs accessibility access to provide system-wide functionality.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>NeuType needs access to system audio to record meeting audio from your Mac.</string>
 </dict>
 </plist>

@@ -17,9 +17,7 @@ protocol MeetingAppControlling {
 
 struct MeetingAppController: MeetingAppControlling {
     func relaunch() {
-        let applicationURL = Bundle.main.bundleURL
-        NSWorkspace.shared.openApplication(at: applicationURL, configuration: NSWorkspace.OpenConfiguration())
-        NSApplication.shared.terminate(nil)
+        AppRelauncher.relaunch(reason: "meeting recorder")
     }
 }
 
@@ -32,22 +30,21 @@ final class MeetingRecorderViewModel: ObservableObject {
     private let recorder: MeetingRecording
     private let store: MeetingRecordStore
     private let transcriptionService: MeetingTranscribing
+    private let summaryService: MeetingSummarizing
     private let appController: MeetingAppControlling
-    private var recordingLimitTask: Task<Void, Never>?
-
-    static let maximumRecordingDuration: TimeInterval = 3600
-
     init(
         permissions: MeetingPermissionChecking = PermissionsManager(),
         recorder: MeetingRecording = MeetingRecorder(),
         store: MeetingRecordStore = .shared,
         transcriptionService: MeetingTranscribing = MeetingTranscriptionService(),
+        summaryService: MeetingSummarizing = MeetingSummaryService(),
         appController: MeetingAppControlling = MeetingAppController()
     ) {
         self.permissions = permissions
         self.recorder = recorder
         self.store = store
         self.transcriptionService = transcriptionService
+        self.summaryService = summaryService
         self.appController = appController
     }
 
@@ -68,7 +65,6 @@ final class MeetingRecorderViewModel: ObservableObject {
         do {
             try await recorder.startRecording()
             hasReachedRecordingLimit = false
-            startRecordingLimitMonitor()
             state = .recording
         } catch {
             MeetingLog.error("startRecording failed: \(error.localizedDescription)")
@@ -79,7 +75,6 @@ final class MeetingRecorderViewModel: ObservableObject {
     func stopRecording() async {
         MeetingLog.info("RecorderViewModel stopRecording")
         do {
-            invalidateRecordingLimitMonitor()
             state = .processing
             guard let audioURL = try await recorder.stopRecording() else {
                 state = .failed("Meeting recording did not produce an audio file.")
@@ -101,6 +96,15 @@ final class MeetingRecorderViewModel: ObservableObject {
             )
             try await store.insertMeeting(meeting, segments: [])
             try await transcriptionService.transcribe(meetingID: meetingID, audioURL: audioURL)
+            if AppPreferences.shared.meetingSummaryConfig.isConfigured {
+                Task {
+                    do {
+                        try await summaryService.submitMeeting(meetingID: meetingID)
+                    } catch {
+                        MeetingLog.error("Meeting summary auto-submit failed after recording meetingID=\(meetingID) error=\(error.localizedDescription)")
+                    }
+                }
+            }
             state = .completed(meetingID)
         } catch {
             MeetingLog.error("stopRecording failed: \(error.localizedDescription)")
@@ -121,7 +125,6 @@ final class MeetingRecorderViewModel: ObservableObject {
 
     func cancelRecording() {
         MeetingLog.info("RecorderViewModel cancelRecording")
-        invalidateRecordingLimitMonitor()
         hasReachedRecordingLimit = false
         recorder.cancelRecording()
         state = .idle
@@ -140,15 +143,6 @@ final class MeetingRecorderViewModel: ObservableObject {
         appController.relaunch()
     }
 
-    func handleRecordingElapsedTime(_ elapsedTime: TimeInterval) {
-        guard state == .recording else { return }
-        guard elapsedTime >= Self.maximumRecordingDuration else { return }
-        guard !hasReachedRecordingLimit else { return }
-
-        hasReachedRecordingLimit = true
-        invalidateRecordingLimitMonitor()
-    }
-
     private static func defaultTitle(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
@@ -162,21 +156,4 @@ final class MeetingRecorderViewModel: ObservableObject {
         return Double(audioFile.length) / audioFile.processingFormat.sampleRate
     }
 
-    private func startRecordingLimitMonitor() {
-        invalidateRecordingLimitMonitor()
-
-        recordingLimitTask = Task { @MainActor [weak self] in
-            let startedAt = Date()
-            while let self, !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                self.handleRecordingElapsedTime(Date().timeIntervalSince(startedAt))
-            }
-        }
-    }
-
-    private func invalidateRecordingLimitMonitor() {
-        recordingLimitTask?.cancel()
-        recordingLimitTask = nil
-    }
 }

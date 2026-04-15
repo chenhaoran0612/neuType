@@ -11,10 +11,31 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
+@MainActor
+final class AppNavigationController: ObservableObject {
+    static let shared = AppNavigationController()
+
+    enum WorkspaceSelection {
+        case home
+        case voiceInput
+    }
+
+    @Published var selectedWorkspace: WorkspaceSelection = .home
+
+    func openVoiceInput() {
+        selectedWorkspace = .voiceInput
+    }
+
+    func returnHome() {
+        selectedWorkspace = .home
+    }
+}
+
 @main
 struct NeuTypeApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var meetingSession = MeetingSessionController()
+    @StateObject private var appNavigation = AppNavigationController.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -26,13 +47,14 @@ struct NeuTypeApp: App {
                     ContentView()
                 }
             }
-            .frame(width: 450)
-            .frame(minHeight: 400, maxHeight: 900)
+            .frame(minWidth: 620, idealWidth: 680)
+            .frame(minHeight: 720, idealHeight: 820, maxHeight: 980)
             .environmentObject(appState)
             .environmentObject(meetingSession)
+            .environmentObject(appNavigation)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 450, height: 650)
+        .defaultSize(width: 680, height: 820)
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -81,10 +103,12 @@ class AppState: ObservableObject {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
     private var microphoneService = MicrophoneService.shared
+    private let appNavigation = AppNavigationController.shared
     private var microphoneObserver: AnyCancellable?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -99,8 +123,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             self.mainWindow = window
             window.delegate = self
             
-            window.minSize = NSSize(width: 450, height: 400)
-            window.maxSize = NSSize(width: 450, height: 900)
+            window.minSize = NSSize(width: 620, height: 720)
+            window.maxSize = NSSize(width: 760, height: 980)
         }
         
         NeuTypeApp.startTranscriptionQueue()
@@ -275,7 +299,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func openMeetingMinutesFromMenu() {
-        showMainWindow()
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(name: .openMeetingMinutes, object: nil)
     }
 
@@ -309,11 +334,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 }
 
 extension AppDelegate: NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if appNavigation.selectedWorkspace == .voiceInput {
+            RequestLogStore.log(.usage, "Voice Input: returned home via window close")
+            appNavigation.returnHome()
+            return false
+        }
+
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-    }
-    
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        return NSSize(width: 450, height: frameSize.height)
     }
 }

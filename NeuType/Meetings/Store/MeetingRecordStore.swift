@@ -5,8 +5,10 @@ final class MeetingRecordStore: ObservableObject {
     static let shared = try! MeetingRecordStore()
 
     private let dbQueue: DatabaseQueue
+    private let staleProcessingCutoff: Date
 
     init(path: String? = nil) throws {
+        staleProcessingCutoff = Date()
         if let path {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -24,6 +26,7 @@ final class MeetingRecordStore: ObservableObject {
         }
 
         try setupDatabase()
+        try repairStaleProcessingMeetings()
     }
 
     static func inMemory() throws -> MeetingRecordStore {
@@ -41,8 +44,10 @@ final class MeetingRecordStore: ObservableObject {
     }
 
     private init(dbQueue: DatabaseQueue) throws {
+        staleProcessingCutoff = Date()
         self.dbQueue = dbQueue
         try setupDatabase()
+        try repairStaleProcessingMeetings()
     }
 
     private nonisolated func setupDatabase() throws {
@@ -58,6 +63,16 @@ final class MeetingRecordStore: ObservableObject {
                 t.column("duration", .double).notNull().defaults(to: 0)
                 t.column("status", .text).notNull()
                 t.column("progress", .double).notNull().defaults(to: 0)
+                t.column("summaryStatus", .text).notNull().defaults(to: MeetingSummaryStatus.unsubmitted.rawValue)
+                t.column("summaryExternalMeetingID", .text).notNull().defaults(to: "")
+                t.column("summaryJobID", .text).notNull().defaults(to: "")
+                t.column("summaryTaskID", .text).notNull().defaults(to: "")
+                t.column("summaryPollURL", .text).notNull().defaults(to: "")
+                t.column("summaryText", .text).notNull().defaults(to: "")
+                t.column("summaryFullText", .text).notNull().defaults(to: "")
+                t.column("summaryResultJSON", .text).notNull().defaults(to: "")
+                t.column("summaryShareURL", .text).notNull().defaults(to: "")
+                t.column("summaryErrorMessage", .text).notNull().defaults(to: "")
             }
 
             try db.create(table: MeetingTranscriptSegment.databaseTableName, ifNotExists: true) { t in
@@ -74,7 +89,64 @@ final class MeetingRecordStore: ObservableObject {
             }
         }
 
+        migrator.registerMigration("v2_add_meeting_summary_columns") { db in
+            let columns = try db.columns(in: MeetingRecord.databaseTableName).map(\.name)
+            let defaultColumns: [(String, Database.ColumnType, DatabaseValueConvertible)] = [
+                ("summaryStatus", .text, MeetingSummaryStatus.unsubmitted.rawValue),
+                ("summaryExternalMeetingID", .text, ""),
+                ("summaryJobID", .text, ""),
+                ("summaryTaskID", .text, ""),
+                ("summaryPollURL", .text, ""),
+                ("summaryText", .text, ""),
+                ("summaryFullText", .text, ""),
+                ("summaryResultJSON", .text, ""),
+                ("summaryShareURL", .text, ""),
+                ("summaryErrorMessage", .text, ""),
+            ]
+
+            for (name, type, value) in defaultColumns where !columns.contains(name) {
+                try db.alter(table: MeetingRecord.databaseTableName) { table in
+                    table.add(column: name, type).notNull().defaults(to: value)
+                }
+            }
+        }
+
+        migrator.registerMigration("v3_add_meeting_summary_full_text") { db in
+            let columns = try db.columns(in: MeetingRecord.databaseTableName).map(\.name)
+            guard !columns.contains("summaryFullText") else { return }
+            try db.alter(table: MeetingRecord.databaseTableName) { table in
+                table.add(column: "summaryFullText", .text).notNull().defaults(to: "")
+            }
+        }
+
         try migrator.migrate(dbQueue)
+    }
+
+    private nonisolated func repairStaleProcessingMeetings() throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                UPDATE \(MeetingRecord.databaseTableName)
+                SET
+                    status = ?,
+                    progress = 0,
+                    transcriptPreview = ''
+                WHERE
+                    status = ?
+                    AND createdAt < ?
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM \(MeetingTranscriptSegment.databaseTableName)
+                        WHERE \(MeetingTranscriptSegment.databaseTableName).meetingID = \(MeetingRecord.databaseTableName).id
+                    )
+                """,
+                arguments: [
+                    MeetingRecordStatus.unprocessed.rawValue,
+                    MeetingRecordStatus.processing.rawValue,
+                    staleProcessingCutoff,
+                ]
+            )
+        }
     }
 
     nonisolated func insertMeeting(
@@ -91,7 +163,7 @@ final class MeetingRecordStore: ObservableObject {
     }
 
     nonisolated func fetchMeeting(id: UUID) async throws -> MeetingRecord? {
-        try await dbQueue.read { db in
+        return try await dbQueue.read { db in
             try MeetingRecord
                 .filter(MeetingRecord.Columns.id == id)
                 .fetchOne(db)
@@ -108,7 +180,7 @@ final class MeetingRecordStore: ObservableObject {
     }
 
     nonisolated func fetchMeetings() async throws -> [MeetingRecord] {
-        try await dbQueue.read { db in
+        return try await dbQueue.read { db in
             try MeetingRecord
                 .order(MeetingRecord.Columns.createdAt.desc)
                 .fetchAll(db)
@@ -149,6 +221,29 @@ final class MeetingRecordStore: ObservableObject {
         postMeetingRecordsDidChange()
     }
 
+    nonisolated func updateMeetingStatus(
+        meetingID: UUID,
+        status: MeetingRecordStatus,
+        progress: Float,
+        transcriptPreview: String? = nil
+    ) async throws {
+        try await dbQueue.write { db in
+            var assignments: [ColumnAssignment] = [
+                MeetingRecord.Columns.status.set(to: status.rawValue),
+                MeetingRecord.Columns.progress.set(to: progress),
+            ]
+
+            if let transcriptPreview {
+                assignments.append(MeetingRecord.Columns.transcriptPreview.set(to: transcriptPreview))
+            }
+
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, assignments)
+        }
+        postMeetingRecordsDidChange()
+    }
+
     nonisolated func updateMeetingTitle(
         meetingID: UUID,
         title: String
@@ -158,6 +253,71 @@ final class MeetingRecordStore: ObservableObject {
                 .filter(MeetingRecord.Columns.id == meetingID)
                 .updateAll(db, [
                     MeetingRecord.Columns.title.set(to: title),
+                ])
+        }
+        postMeetingRecordsDidChange()
+    }
+
+    nonisolated func updateSummarySubmission(
+        meetingID: UUID,
+        status: MeetingSummaryStatus,
+        externalMeetingID: String,
+        jobID: String,
+        taskID: String,
+        pollURL: String
+    ) async throws {
+        try await dbQueue.write { db in
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, [
+                    MeetingRecord.Columns.summaryStatus.set(to: status.rawValue),
+                    MeetingRecord.Columns.summaryExternalMeetingID.set(to: externalMeetingID),
+                    MeetingRecord.Columns.summaryJobID.set(to: jobID),
+                    MeetingRecord.Columns.summaryTaskID.set(to: taskID),
+                    MeetingRecord.Columns.summaryPollURL.set(to: pollURL),
+                    MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
+                ])
+        }
+        postMeetingRecordsDidChange()
+    }
+
+    nonisolated func updateSummaryStatus(
+        meetingID: UUID,
+        status: MeetingSummaryStatus,
+        errorMessage: String = ""
+    ) async throws {
+        try await dbQueue.write { db in
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, [
+                    MeetingRecord.Columns.summaryStatus.set(to: status.rawValue),
+                    MeetingRecord.Columns.summaryErrorMessage.set(to: errorMessage),
+                ])
+        }
+        postMeetingRecordsDidChange()
+    }
+
+    nonisolated func updateSummaryResult(
+        meetingID: UUID,
+        summaryText: String,
+        fullText: String,
+        result: MeetingSummaryResult,
+        shareURL: String
+    ) async throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let resultJSON = String(decoding: try encoder.encode(result), as: UTF8.self)
+
+        try await dbQueue.write { db in
+            _ = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .updateAll(db, [
+                    MeetingRecord.Columns.summaryStatus.set(to: MeetingSummaryStatus.completed.rawValue),
+                    MeetingRecord.Columns.summaryText.set(to: summaryText),
+                    MeetingRecord.Columns.summaryFullText.set(to: fullText),
+                    MeetingRecord.Columns.summaryResultJSON.set(to: resultJSON),
+                    MeetingRecord.Columns.summaryShareURL.set(to: shareURL),
+                    MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
                 ])
         }
         postMeetingRecordsDidChange()

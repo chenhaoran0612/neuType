@@ -9,43 +9,41 @@ struct MeetingListView: View {
         ScrollView(showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 14) {
                 ForEach(viewModel.meetings) { meeting in
-                    HStack(alignment: .top, spacing: 10) {
+                    ZStack(alignment: .trailing) {
                         Button {
                             selection = meeting.id
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(displayTitle(for: meeting.title))
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(isSelected(meeting) ? Color.white : Color.primary)
                                     .lineLimit(1)
 
                                 Text(meeting.createdAt.formatted(date: .long, time: .shortened))
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(isSelected(meeting) ? Color.white.opacity(0.85) : Color.secondary)
                                     .lineLimit(1)
-
-                                if !meeting.transcriptPreview.isEmpty {
-                                    Text(meeting.transcriptPreview)
-                                        .font(.system(size: 8, weight: .regular))
-                                        .foregroundStyle(isSelected(meeting) ? Color.white.opacity(0.76) : Color.secondary.opacity(0.92))
-                                        .lineLimit(2)
-                                        .padding(.top, 2)
-                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
                         .buttonStyle(.plain)
 
-                        Button(role: .destructive) {
-                            onDelete(meeting)
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(isSelected(meeting) ? Color.white.opacity(0.92) : Color.secondary)
-                                .frame(width: 20, height: 20)
+                        VStack {
+                            Spacer(minLength: 0)
+                            Button(role: .destructive) {
+                                onDelete(meeting)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(isSelected(meeting) ? Color.white.opacity(0.92) : Color.secondary)
+                                    .frame(width: 20, height: 20)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            Spacer(minLength: 0)
                         }
-                        .buttonStyle(.plain)
+                        .frame(maxHeight: .infinity, alignment: .trailing)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)

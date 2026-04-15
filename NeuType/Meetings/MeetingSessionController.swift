@@ -62,12 +62,14 @@ final class MeetingSessionController: ObservableObject {
     let recorderViewModel: MeetingRecorderViewModel
     private let overlayController: MeetingOverlayControlling
     private let mainWindowController: MeetingMainWindowControlling
+    private let meetingWindowController: MeetingHistoryWindowControlling
     private var cancellables = Set<AnyCancellable>()
 
     init() {
         self.recorderViewModel = MeetingRecorderViewModel()
         self.overlayController = MeetingOverlayWindowManager.shared
         self.mainWindowController = MeetingMainWindowController.shared
+        self.meetingWindowController = MeetingHistoryWindowManager.shared
         observeRecorderState()
     }
 
@@ -75,29 +77,40 @@ final class MeetingSessionController: ObservableObject {
         self.recorderViewModel = recorderViewModel
         self.overlayController = MeetingOverlayWindowManager.shared
         self.mainWindowController = MeetingMainWindowController.shared
+        self.meetingWindowController = MeetingHistoryWindowManager.shared
         observeRecorderState()
     }
 
     init(
         recorderViewModel: MeetingRecorderViewModel,
         overlayController: MeetingOverlayControlling,
-        mainWindowController: MeetingMainWindowControlling
+        mainWindowController: MeetingMainWindowControlling,
+        meetingWindowController: MeetingHistoryWindowControlling
     ) {
         self.recorderViewModel = recorderViewModel
         self.overlayController = overlayController
         self.mainWindowController = mainWindowController
+        self.meetingWindowController = meetingWindowController
         observeRecorderState()
     }
 
     func present() {
         MeetingLog.info("Present meeting history page")
-        mainWindowController.showMainWindow()
         isPresented = true
+        meetingWindowController.showWindow(sessionController: self)
     }
 
     func dismiss() {
         MeetingLog.info("Dismiss meeting history page")
         isPresented = false
+        meetingWindowController.hideWindow()
+    }
+
+    func dismissToHome() {
+        MeetingLog.info("Dismiss meeting history page and return to home")
+        dismiss()
+        mainWindowController.showMainWindow()
+        NotificationCenter.default.post(name: .returnToHome, object: nil)
     }
 
     func handleShortcut() async {
@@ -153,6 +166,7 @@ final class MeetingSessionController: ObservableObject {
     func handleMeetingPageDismissed() {
         MeetingLog.info("Meeting history page dismissed overlayState=\(String(describing: overlayState))")
         isPresented = false
+        meetingWindowController.hideWindow()
 
         switch overlayState {
         case .recordingBar:

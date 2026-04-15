@@ -26,6 +26,28 @@ final class MeetingListViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.meetings.map(\.id), [first.id])
     }
+
+    @MainActor
+    func testImportAudioCreatesUnprocessedMeetingAndCopiesFile() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        try Data("demo".utf8).write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let meetingsDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let importer = DefaultMeetingAudioImporter(meetingsDirectory: meetingsDirectory)
+        let store = try MeetingRecordStore.inMemory()
+        let viewModel = MeetingListViewModel(store: store, audioImporter: importer)
+
+        let importedMeetingID = try await viewModel.importAudio(from: sourceURL)
+
+        let meeting = try await store.fetchMeeting(id: importedMeetingID)
+        XCTAssertEqual(meeting?.status, .unprocessed)
+        XCTAssertEqual(meeting?.title, sourceURL.deletingPathExtension().lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: meetingsDirectory.appendingPathComponent(sourceURL.lastPathComponent).path))
+    }
 }
 
 private extension MeetingRecord {

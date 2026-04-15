@@ -5,10 +5,15 @@ final class MeetingListViewModel: ObservableObject {
     @Published private(set) var meetings: [MeetingRecord] = []
 
     private let store: MeetingRecordStore
+    private let audioImporter: MeetingAudioImporting
     private var recordsDidChangeObserver: NSObjectProtocol?
 
-    init(store: MeetingRecordStore = .shared) {
+    init(
+        store: MeetingRecordStore = .shared,
+        audioImporter: MeetingAudioImporting = DefaultMeetingAudioImporter()
+    ) {
         self.store = store
+        self.audioImporter = audioImporter
         recordsDidChangeObserver = NotificationCenter.default.addObserver(
             forName: .meetingRecordsDidChange,
             object: nil,
@@ -42,5 +47,24 @@ final class MeetingListViewModel: ObservableObject {
         } catch {
             await load()
         }
+    }
+
+    func importAudio(from sourceURL: URL) async throws -> UUID {
+        let importedAudioURL = try audioImporter.importAudio(from: sourceURL)
+        let meetingID = UUID()
+        let createdAt = Date()
+        let meeting = MeetingRecord(
+            id: meetingID,
+            createdAt: createdAt,
+            title: sourceURL.deletingPathExtension().lastPathComponent,
+            audioFileName: importedAudioURL.lastPathComponent,
+            transcriptPreview: "",
+            duration: 0,
+            status: .unprocessed,
+            progress: 0
+        )
+        try await store.insertMeeting(meeting, segments: [])
+        await load()
+        return meetingID
     }
 }

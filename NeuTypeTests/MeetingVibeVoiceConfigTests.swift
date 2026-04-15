@@ -2,54 +2,57 @@ import XCTest
 @testable import NeuType
 
 final class MeetingVibeVoiceConfigTests: XCTestCase {
-    func testRelativeRunnerPathResolvesAgainstWorkingDirectory() {
+    func testResolvedCallURLUsesBaseURLAndAPIPrefix() {
         let config = MeetingVibeVoiceConfig(
-            pythonPath: "/usr/bin/python3",
-            runnerPath: "Scripts/vibevoice_asr_runner.py",
-            modelID: "microsoft/VibeVoice-ASR-HF"
+            baseURL: "http://workspace.featurize.cn:12930",
+            apiPrefix: "/gradio_api",
+            contextInfo: "OpenAI\nMicrosoft",
+                maxNewTokens: 16384,
+            temperature: 0.0,
+            topP: 1.0,
+            doSample: false,
+            repetitionPenalty: 1.0
         )
 
-        let resolvedPath = config.resolvedRunnerScriptPath(
-            currentDirectoryPath: "/tmp/NeuType"
+        XCTAssertEqual(
+            config.endpointURL(path: "call/transcribe_audio")?.absoluteString,
+            "http://workspace.featurize.cn:12930/gradio_api/call/transcribe_audio"
         )
-
-        XCTAssertEqual(resolvedPath, "/tmp/NeuType/Scripts/vibevoice_asr_runner.py")
     }
 
-    func testRelativeRunnerPathPrefersBundledResourceWhenAvailable() throws {
-        let resourceRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let scriptsDirectory = resourceRoot.appendingPathComponent("Scripts", isDirectory: true)
-        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
-        let bundledScriptURL = scriptsDirectory.appendingPathComponent("vibevoice_asr_runner.py")
-        _ = FileManager.default.createFile(atPath: bundledScriptURL.path, contents: Data(), attributes: nil)
-        defer { try? FileManager.default.removeItem(at: resourceRoot) }
-
+    func testResolvedCallURLHandlesTrailingSlashes() {
         let config = MeetingVibeVoiceConfig(
-            pythonPath: "/usr/bin/python3",
-            runnerPath: "Scripts/vibevoice_asr_runner.py",
-            modelID: "microsoft/VibeVoice-ASR-HF"
+            baseURL: "http://workspace.featurize.cn:12930/",
+            apiPrefix: "gradio_api/",
+            contextInfo: "",
+            maxNewTokens: 16384,
+            temperature: 0.0,
+            topP: 1.0,
+            doSample: false,
+            repetitionPenalty: 1.0
         )
 
-        let resolvedPath = config.resolvedRunnerScriptPath(
-            currentDirectoryPath: "/",
-            bundleResourcePath: resourceRoot.path
+        XCTAssertEqual(
+            config.endpointURL(path: "/upload")?.absoluteString,
+            "http://workspace.featurize.cn:12930/gradio_api/upload"
         )
-
-        XCTAssertEqual(resolvedPath, bundledScriptURL.path)
     }
 
-    func testAbsoluteRunnerPathRemainsUnchanged() {
+    func testCombinedContextMergesConfiguredTermsAndHotwords() {
         let config = MeetingVibeVoiceConfig(
-            pythonPath: "/usr/bin/python3",
-            runnerPath: "/opt/vibevoice/runner.py",
-            modelID: "microsoft/VibeVoice-ASR-HF"
+            baseURL: "http://workspace.featurize.cn:12930",
+            apiPrefix: "/gradio_api",
+            contextInfo: "OpenAI\nMicrosoft",
+            maxNewTokens: 16384,
+            temperature: 0.0,
+            topP: 1.0,
+            doSample: false,
+            repetitionPenalty: 1.0
         )
 
-        let resolvedPath = config.resolvedRunnerScriptPath(
-            currentDirectoryPath: "/tmp/NeuType"
+        XCTAssertEqual(
+            config.combinedContextInfo(hotwords: ["VibeVoice", "Microsoft"]),
+            "OpenAI\nMicrosoft\nVibeVoice"
         )
-
-        XCTAssertEqual(resolvedPath, "/opt/vibevoice/runner.py")
     }
 }

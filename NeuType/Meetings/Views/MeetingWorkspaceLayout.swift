@@ -25,35 +25,35 @@ struct MeetingWorkspaceLayout {
     }
 
     var sidebarTitleFontSize: CGFloat {
-        clamp(sidebarWidth * 0.05, min: 16, max: 22)
+        clamp(sidebarWidth * 0.05, min: 18, max: 24)
     }
 
     var sidebarBodyFontSize: CGFloat {
-        clamp(sidebarWidth * 0.022, min: 9, max: 12)
+        clamp(sidebarWidth * 0.022, min: 11, max: 14)
     }
 
     var sidebarCardTitleFontSize: CGFloat {
-        clamp(sidebarWidth * 0.033, min: 12, max: 16)
+        clamp(sidebarWidth * 0.033, min: 14, max: 18)
     }
 
     var sidebarCardMetadataFontSize: CGFloat {
-        clamp(sidebarWidth * 0.019, min: 9, max: 11)
+        clamp(sidebarWidth * 0.019, min: 11, max: 13)
     }
 
     var sidebarSectionTitleFontSize: CGFloat {
-        clamp(sidebarWidth * 0.024, min: 11, max: 14)
+        clamp(sidebarWidth * 0.024, min: 13, max: 16)
     }
 
     var detailTitleFontSize: CGFloat {
-        clamp(detailAreaWidth * 0.022, min: 16, max: 22)
+        clamp(detailAreaWidth * 0.022, min: 18, max: 24)
     }
 
     var detailMetadataFontSize: CGFloat {
-        clamp(detailAreaWidth * 0.0105, min: 9, max: 11)
+        clamp(detailAreaWidth * 0.0105, min: 11, max: 13)
     }
 
     var tabFontSize: CGFloat {
-        clamp(detailAreaWidth * 0.011, min: 10, max: 12)
+        clamp(detailAreaWidth * 0.011, min: 12, max: 14)
     }
 
     var detailContentMaxWidth: CGFloat {
