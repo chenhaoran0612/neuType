@@ -346,10 +346,20 @@ private struct MeetingSummaryPane: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.primary)
 
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            let messageLines = splitMeetingStatusMessage(message)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(messageLines.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let detail = messageLines.detail {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             if let buttonTitle, let action {
                 Button(buttonTitle, action: action)
@@ -420,6 +430,7 @@ private struct MeetingShareActionButtons: View {
 private struct MeetingTranscriptPane: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
     @ObservedObject private var playbackCoordinator: MeetingPlaybackCoordinator
+    @ObservedObject private var requestLogStore: RequestLogStore
     @State private var transcriptFailureDetails = ""
     @State private var showingTranscriptFailureDetails = false
     private let layout: MeetingWorkspaceLayout
@@ -428,6 +439,7 @@ private struct MeetingTranscriptPane: View {
         self.viewModel = viewModel
         self.layout = layout
         _playbackCoordinator = ObservedObject(wrappedValue: viewModel.playbackCoordinator)
+        _requestLogStore = ObservedObject(wrappedValue: RequestLogStore.shared)
     }
 
     var body: some View {
@@ -443,26 +455,33 @@ private struct MeetingTranscriptPane: View {
                     }
                 )
             case .processing:
-                transcriptStatusPanel(
-                    title: "正在处理音频",
-                    message: "正在调用转写服务生成文字记录和说话人分段，请稍候。",
-                    buttonTitle: nil,
-                    action: nil
-                )
+                VStack(alignment: .leading, spacing: 16) {
+                    transcriptStatusPanel(
+                        title: "正在处理音频",
+                        message: viewModel.transcriptProcessingMessage,
+                        progress: viewModel.transcriptProgress,
+                        buttonTitle: nil,
+                        action: nil
+                    )
+                    transcriptRequestLogsPanel
+                }
             case .failed(let message):
-                transcriptStatusPanel(
-                    title: "文字记录处理失败",
-                    message: message.isEmpty ? "处理过程中出现错误，请重新尝试。" : message,
-                    buttonTitle: "重新处理",
-                    secondaryButtonTitle: message.isEmpty ? nil : "查看失败原因",
-                    secondaryAction: message.isEmpty ? nil : {
-                        transcriptFailureDetails = message
-                        showingTranscriptFailureDetails = true
-                    },
-                    action: {
-                        viewModel.startTranscriptProcessing()
-                    }
-                )
+                VStack(alignment: .leading, spacing: 16) {
+                    transcriptStatusPanel(
+                        title: "文字记录处理失败",
+                        message: message.isEmpty ? "处理过程中出现错误，请重新尝试。" : message,
+                        buttonTitle: "重新处理",
+                        secondaryButtonTitle: message.isEmpty ? nil : "查看失败原因",
+                        secondaryAction: message.isEmpty ? nil : {
+                            transcriptFailureDetails = message
+                            showingTranscriptFailureDetails = true
+                        },
+                        action: {
+                            viewModel.startTranscriptProcessing()
+                        }
+                    )
+                    transcriptRequestLogsPanel
+                }
             case .completed:
                 HStack(spacing: 12) {
                     HStack {
@@ -565,9 +584,56 @@ private struct MeetingTranscriptPane: View {
     }
 
     @ViewBuilder
+    private var transcriptRequestLogsPanel: some View {
+        let logs = viewModel.transcriptRequestLogs
+        VStack(alignment: .leading, spacing: 12) {
+            Text("请求日志")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            if logs.isEmpty {
+                Text("暂无请求日志")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(logs) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                                Text(entry.message)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(minHeight: 90, maxHeight: 180)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 560, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.black.opacity(0.025))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
+        .id(requestLogStore.entries.count)
+    }
+
+    @ViewBuilder
     private func transcriptStatusPanel(
         title: String,
         message: String,
+        progress: Float? = nil,
         buttonTitle: String?,
         secondaryButtonTitle: String? = nil,
         secondaryAction: (() -> Void)? = nil,
@@ -578,10 +644,30 @@ private struct MeetingTranscriptPane: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.primary)
 
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            let messageLines = splitMeetingStatusMessage(message)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(messageLines.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let detail = messageLines.detail {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if let progress {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: Double(progress), total: 1.0)
+                        .controlSize(.small)
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+            }
 
             if let buttonTitle, let action {
                 HStack(spacing: 10) {
@@ -595,7 +681,7 @@ private struct MeetingTranscriptPane: View {
                             .controlSize(.small)
                     }
                 }
-            } else {
+            } else if progress == nil {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -658,6 +744,19 @@ private struct MeetingTranscriptPane: View {
             }
         }
     }
+
+}
+
+private func splitMeetingStatusMessage(_ message: String) -> (title: String, detail: String?) {
+    let lines = message
+        .split(whereSeparator: \.isNewline)
+        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard let firstLine = lines.first else {
+        return ("正在调用转写服务生成文字记录和说话人分段，请稍候。", nil)
+    }
+    let detail = lines.dropFirst().joined(separator: "\n")
+    return (firstLine, detail.isEmpty ? nil : detail)
 }
 
 private struct MeetingPlaybackBar: View {

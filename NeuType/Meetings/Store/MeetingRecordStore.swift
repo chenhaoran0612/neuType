@@ -2,31 +2,66 @@ import Foundation
 import GRDB
 
 final class MeetingRecordStore: ObservableObject {
-    static let shared = try! MeetingRecordStore()
+    static let shared = makeShared()
+    private(set) static var sharedBootstrapDescription = "uninitialized"
+    private(set) static var sharedBootstrapFailure: String?
 
     private let dbQueue: DatabaseQueue
+    private let databasePath: String
     private let staleProcessingCutoff: Date
 
     init(path: String? = nil) throws {
         staleProcessingCutoff = Date()
         if let path {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            dbQueue = try DatabaseQueue(path: path)
+            databasePath = path
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                MeetingLog.error("MeetingRecordStore create directory failed path=\(directory.path) error=\(error.localizedDescription)")
+                throw error
+            }
+
+            do {
+                dbQueue = try DatabaseQueue(path: path)
+            } catch {
+                MeetingLog.error("MeetingRecordStore open database failed path=\(path) error=\(error.localizedDescription)")
+                throw error
+            }
         } else {
-            let applicationSupport = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first!
-            let bundleID = Bundle.main.bundleIdentifier ?? "NeuType"
-            let appDirectory = applicationSupport.appendingPathComponent(bundleID)
-            try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
-            let dbPath = appDirectory.appendingPathComponent("meetings.sqlite").path
-            dbQueue = try DatabaseQueue(path: dbPath)
+            let dbPath = try Self.primaryDatabaseURL().path
+            let directory = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
+            databasePath = dbPath
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                MeetingLog.error("MeetingRecordStore create default directory failed path=\(directory.path) error=\(error.localizedDescription)")
+                throw error
+            }
+
+            do {
+                dbQueue = try DatabaseQueue(path: dbPath)
+            } catch {
+                MeetingLog.error("MeetingRecordStore open default database failed path=\(dbPath) error=\(error.localizedDescription)")
+                throw error
+            }
         }
 
-        try setupDatabase()
-        try repairStaleProcessingMeetings()
+        do {
+            try setupDatabase()
+        } catch {
+            MeetingLog.error("MeetingRecordStore migrate failed path=\(databasePath) error=\(error.localizedDescription)")
+            throw error
+        }
+
+        do {
+            try repairStaleProcessingMeetings()
+        } catch {
+            MeetingLog.error("MeetingRecordStore stale repair failed path=\(databasePath) error=\(error.localizedDescription)")
+            throw error
+        }
+
+        MeetingLog.info("MeetingRecordStore initialized path=\(databasePath)")
     }
 
     static func inMemory() throws -> MeetingRecordStore {
@@ -45,9 +80,11 @@ final class MeetingRecordStore: ObservableObject {
 
     private init(dbQueue: DatabaseQueue) throws {
         staleProcessingCutoff = Date()
+        databasePath = "in-memory"
         self.dbQueue = dbQueue
         try setupDatabase()
         try repairStaleProcessingMeetings()
+        MeetingLog.info("MeetingRecordStore initialized path=in-memory")
     }
 
     private nonisolated func setupDatabase() throws {
@@ -227,21 +264,34 @@ final class MeetingRecordStore: ObservableObject {
         progress: Float,
         transcriptPreview: String? = nil
     ) async throws {
-        try await dbQueue.write { db in
+        let didChange = try await dbQueue.write { db -> Bool in
+            guard let current = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .fetchOne(db) else {
+                return false
+            }
+
             var assignments: [ColumnAssignment] = [
                 MeetingRecord.Columns.status.set(to: status.rawValue),
                 MeetingRecord.Columns.progress.set(to: progress),
             ]
+            var hasChanges = current.status != status || current.progress != progress
 
             if let transcriptPreview {
+                hasChanges = hasChanges || current.transcriptPreview != transcriptPreview
                 assignments.append(MeetingRecord.Columns.transcriptPreview.set(to: transcriptPreview))
             }
+
+            guard hasChanges else { return false }
 
             _ = try MeetingRecord
                 .filter(MeetingRecord.Columns.id == meetingID)
                 .updateAll(db, assignments)
+            return true
         }
-        postMeetingRecordsDidChange()
+        if didChange {
+            postMeetingRecordsDidChange()
+        }
     }
 
     nonisolated func updateMeetingTitle(
@@ -266,7 +316,23 @@ final class MeetingRecordStore: ObservableObject {
         taskID: String,
         pollURL: String
     ) async throws {
-        try await dbQueue.write { db in
+        let didChange = try await dbQueue.write { db -> Bool in
+            guard let current = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .fetchOne(db) else {
+                return false
+            }
+
+            let hasChanges =
+                current.summaryStatus != status
+                || current.summaryExternalMeetingID != externalMeetingID
+                || current.summaryJobID != jobID
+                || current.summaryTaskID != taskID
+                || current.summaryPollURL != pollURL
+                || !current.summaryErrorMessage.isEmpty
+
+            guard hasChanges else { return false }
+
             _ = try MeetingRecord
                 .filter(MeetingRecord.Columns.id == meetingID)
                 .updateAll(db, [
@@ -277,8 +343,11 @@ final class MeetingRecordStore: ObservableObject {
                     MeetingRecord.Columns.summaryPollURL.set(to: pollURL),
                     MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
                 ])
+            return true
         }
-        postMeetingRecordsDidChange()
+        if didChange {
+            postMeetingRecordsDidChange()
+        }
     }
 
     nonisolated func updateSummaryStatus(
@@ -286,15 +355,28 @@ final class MeetingRecordStore: ObservableObject {
         status: MeetingSummaryStatus,
         errorMessage: String = ""
     ) async throws {
-        try await dbQueue.write { db in
+        let didChange = try await dbQueue.write { db -> Bool in
+            guard let current = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .fetchOne(db) else {
+                return false
+            }
+
+            guard current.summaryStatus != status || current.summaryErrorMessage != errorMessage else {
+                return false
+            }
+
             _ = try MeetingRecord
                 .filter(MeetingRecord.Columns.id == meetingID)
                 .updateAll(db, [
                     MeetingRecord.Columns.summaryStatus.set(to: status.rawValue),
                     MeetingRecord.Columns.summaryErrorMessage.set(to: errorMessage),
                 ])
+            return true
         }
-        postMeetingRecordsDidChange()
+        if didChange {
+            postMeetingRecordsDidChange()
+        }
     }
 
     nonisolated func updateSummaryResult(
@@ -308,7 +390,23 @@ final class MeetingRecordStore: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         let resultJSON = String(decoding: try encoder.encode(result), as: UTF8.self)
 
-        try await dbQueue.write { db in
+        let didChange = try await dbQueue.write { db -> Bool in
+            guard let current = try MeetingRecord
+                .filter(MeetingRecord.Columns.id == meetingID)
+                .fetchOne(db) else {
+                return false
+            }
+
+            let hasChanges =
+                current.summaryStatus != .completed
+                || current.summaryText != summaryText
+                || current.summaryFullText != fullText
+                || current.summaryResultJSON != resultJSON
+                || current.summaryShareURL != shareURL
+                || !current.summaryErrorMessage.isEmpty
+
+            guard hasChanges else { return false }
+
             _ = try MeetingRecord
                 .filter(MeetingRecord.Columns.id == meetingID)
                 .updateAll(db, [
@@ -319,8 +417,11 @@ final class MeetingRecordStore: ObservableObject {
                     MeetingRecord.Columns.summaryShareURL.set(to: shareURL),
                     MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
                 ])
+            return true
         }
-        postMeetingRecordsDidChange()
+        if didChange {
+            postMeetingRecordsDidChange()
+        }
     }
 
     nonisolated func deleteMeeting(meetingID: UUID) async throws {
@@ -347,5 +448,80 @@ final class MeetingRecordStore: ObservableObject {
 
     private nonisolated func postMeetingRecordsDidChange() {
         NotificationCenter.default.post(name: .meetingRecordsDidChange, object: nil)
+    }
+
+    private static func makeShared() -> MeetingRecordStore {
+        let primaryPath: String
+        do {
+            primaryPath = try primaryDatabaseURL().path
+            let store = try MeetingRecordStore(path: primaryPath)
+            sharedBootstrapDescription = "primary:\(primaryPath)"
+            return store
+        } catch {
+            let attemptedPath = (try? primaryDatabaseURL().path) ?? "unknown"
+            let message = "MeetingRecordStore shared init failed mode=primary path=\(attemptedPath) error=\(error.localizedDescription)"
+            sharedBootstrapFailure = message
+            MeetingLog.error(message)
+        }
+
+        let recoveryPath = recoveryDatabaseURL().path
+        do {
+            let store = try MeetingRecordStore(path: recoveryPath)
+            sharedBootstrapDescription = "recovery:\(recoveryPath)"
+            MeetingLog.error("MeetingRecordStore recovery database activated path=\(recoveryPath)")
+            return store
+        } catch {
+            let message = "MeetingRecordStore shared init failed mode=recovery path=\(recoveryPath) error=\(error.localizedDescription)"
+            sharedBootstrapFailure = [sharedBootstrapFailure, message]
+                .compactMap { $0 }
+                .joined(separator: " | ")
+            MeetingLog.error(message)
+        }
+
+        do {
+            let store = try MeetingRecordStore(dbQueue: DatabaseQueue())
+            sharedBootstrapDescription = "in-memory"
+            MeetingLog.error("MeetingRecordStore falling back to in-memory store")
+            return store
+        } catch {
+            let message = "MeetingRecordStore shared init failed mode=in-memory error=\(error.localizedDescription)"
+            sharedBootstrapFailure = [sharedBootstrapFailure, message]
+                .compactMap { $0 }
+                .joined(separator: " | ")
+            MeetingLog.error(message)
+            preconditionFailure(message)
+        }
+    }
+
+    private static func primaryDatabaseURL() throws -> URL {
+        try defaultApplicationSupportDirectory().appendingPathComponent("meetings.sqlite")
+    }
+
+    private static func recoveryDatabaseURL() -> URL {
+        let baseDirectory = (try? defaultApplicationSupportDirectory()) ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return baseDirectory.appendingPathComponent("meetings.recovery.sqlite")
+    }
+
+    private static func defaultApplicationSupportDirectory() throws -> URL {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw MeetingRecordStoreBootstrapError.missingApplicationSupportDirectory
+        }
+
+        let bundleID = Bundle.main.bundleIdentifier ?? "NeuType"
+        return applicationSupport.appendingPathComponent(bundleID)
+    }
+}
+
+enum MeetingRecordStoreBootstrapError: LocalizedError {
+    case missingApplicationSupportDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .missingApplicationSupportDirectory:
+            return "Application Support directory is unavailable."
+        }
     }
 }

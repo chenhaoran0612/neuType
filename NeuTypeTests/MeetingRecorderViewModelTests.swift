@@ -87,6 +87,7 @@ final class MeetingRecorderViewModelTests: XCTestCase {
         await viewModel.startRecording()
 
         await viewModel.handleShortcut()
+        try? await Task.sleep(for: .milliseconds(50))
 
         XCTAssertEqual(recorder.startCalls, 1)
         XCTAssertEqual(recorder.stopCalls, 1)
@@ -100,7 +101,16 @@ final class MeetingRecorderViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testStopRecordingCreatesMeetingAndTransitionsToCompleted() async throws {
+    func testStopRecordingCreatesMeetingAndTransitionsToCompletedImmediately() async throws {
+        let previousBaseURL = AppPreferences.shared.meetingSummaryBaseURL
+        let previousAPIKey = AppPreferences.shared.meetingSummaryAPIKey
+        AppPreferences.shared.meetingSummaryBaseURL = "https://ai-worker.neuxnet.com"
+        AppPreferences.shared.meetingSummaryAPIKey = "ntm_test"
+        defer {
+            AppPreferences.shared.meetingSummaryBaseURL = previousBaseURL
+            AppPreferences.shared.meetingSummaryAPIKey = previousAPIKey
+        }
+
         let permissions = StubMeetingPermissions(
             microphoneGranted: true,
             screenGranted: true
@@ -108,18 +118,19 @@ final class MeetingRecorderViewModelTests: XCTestCase {
         let audioURL = temporaryAudioURL()
         let recorder = StubMeetingRecorder(stopRecordingURL: audioURL)
         let store = try MeetingRecordStore.inMemory()
-        let transcriptionService = StubMeetingTranscriptionService()
+        let transcriptionService = StubMeetingTranscriptionService(delayNanoseconds: 200_000_000)
+        let summaryService = StubMeetingSummaryService()
         let viewModel = MeetingRecorderViewModel(
             permissions: permissions,
             recorder: recorder,
             store: store,
-            transcriptionService: transcriptionService
+            transcriptionService: transcriptionService,
+            summaryService: summaryService
         )
 
         await viewModel.startRecording()
         await viewModel.stopRecording()
 
-        XCTAssertEqual(transcriptionService.transcribedAudioURLs, [audioURL])
         guard case .completed(let meetingID) = viewModel.state else {
             return XCTFail("Expected completed state")
         }
@@ -128,46 +139,11 @@ final class MeetingRecorderViewModelTests: XCTestCase {
         XCTAssertEqual(savedMeeting?.audioFileName, audioURL.lastPathComponent)
         XCTAssertEqual(savedMeeting?.status, .processing)
         XCTAssertFalse(savedMeeting?.title.hasPrefix("Meeting ") ?? true)
-    }
 
-    @MainActor
-    func testRecordingLimitFlagTurnsOnAtOneHour() async {
-        let permissions = StubMeetingPermissions(
-            microphoneGranted: true,
-            screenGranted: true
-        )
-        let recorder = StubMeetingRecorder()
-        let viewModel = MeetingRecorderViewModel(
-            permissions: permissions,
-            recorder: recorder
-        )
+        try? await Task.sleep(for: .milliseconds(300))
 
-        await viewModel.startRecording()
-        viewModel.handleRecordingElapsedTime(3600)
-
-        XCTAssertEqual(viewModel.state, .recording)
-        XCTAssertTrue(viewModel.hasReachedRecordingLimit)
-    }
-
-    @MainActor
-    func testStartingRecordingResetsRecordingLimitFlag() async {
-        let permissions = StubMeetingPermissions(
-            microphoneGranted: true,
-            screenGranted: true
-        )
-        let recorder = StubMeetingRecorder()
-        let viewModel = MeetingRecorderViewModel(
-            permissions: permissions,
-            recorder: recorder
-        )
-
-        await viewModel.startRecording()
-        viewModel.handleRecordingElapsedTime(3600)
-        viewModel.cancelRecording()
-
-        await viewModel.startRecording()
-
-        XCTAssertFalse(viewModel.hasReachedRecordingLimit)
+        XCTAssertEqual(transcriptionService.transcribedAudioURLs, [audioURL])
+        XCTAssertEqual(summaryService.submittedMeetingIDs, [meetingID])
     }
 }
 
@@ -218,11 +194,29 @@ private final class StubMeetingRecorder: MeetingRecording {
 private final class StubMeetingTranscriptionService: MeetingTranscribing {
     private(set) var transcribedMeetingIDs: [UUID] = []
     private(set) var transcribedAudioURLs: [URL] = []
+    private let delayNanoseconds: UInt64
+
+    init(delayNanoseconds: UInt64 = 0) {
+        self.delayNanoseconds = delayNanoseconds
+    }
 
     func transcribe(meetingID: UUID, audioURL: URL) async throws {
+        if delayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
         transcribedMeetingIDs.append(meetingID)
         transcribedAudioURLs.append(audioURL)
     }
+}
+
+private final class StubMeetingSummaryService: MeetingSummarizing {
+    private(set) var submittedMeetingIDs: [UUID] = []
+
+    func submitMeeting(meetingID: UUID) async throws {
+        submittedMeetingIDs.append(meetingID)
+    }
+
+    func resumeMeeting(meetingID: UUID) async throws {}
 }
 
 private final class StubMeetingAppController: MeetingAppControlling {

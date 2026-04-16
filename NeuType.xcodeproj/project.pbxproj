@@ -770,7 +770,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"NeuType/Preview Content\"";
@@ -789,7 +789,7 @@
 					"$(PROJECT_DIR)/libwhisper/**",
 				);
 				INFOPLIST_FILE = "NeuType/NeuType-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = NeuType;
+				INFOPLIST_KEY_CFBundleDisplayName = "NeuType-Test";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "NeuType needs accessibility access to provide system-wide functionality.";
 				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "NeuType needs access to system audio to record meeting audio from your Mac.";
@@ -805,13 +805,14 @@
 					"$(PROJECT_DIR)/build",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = ai.neuxnet.neutype;
-				PRODUCT_NAME = NeuType;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.neuxnet.neutype.test;
+				PRODUCT_MODULE_NAME = NeuType;
+				PRODUCT_NAME = "NeuType-Test";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -829,7 +830,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"NeuType/Preview Content\"";
@@ -866,7 +867,7 @@
 				);
 				LLVM_LTO = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -887,7 +888,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8LLDD7HWZK;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -896,13 +897,13 @@
 					"$(PROJECT_DIR)/libwhisper/**",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.neuxnet.neutypeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/Bridge.h";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NeuType.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NeuType";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NeuType-Test.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NeuType-Test";
 			};
 			name = Debug;
 		};
@@ -911,7 +912,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8LLDD7HWZK;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -920,7 +921,7 @@
 					"$(PROJECT_DIR)/libwhisper/**",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.neuxnet.neutypeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -934,11 +935,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8LLDD7HWZK;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.neuxnet.neutypeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -951,11 +952,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 8LLDD7HWZK;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.neuxnet.neutypeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;

@@ -10,8 +10,9 @@ if [[ "$NO_CODESIGN" == "1" ]]; then
     NO_CODESIGN=true
 fi
 
-APP_BUNDLE_ID="ai.neuxnet.neutype"
-APP_DEBUG_BINARY="./build/Build/Products/Debug/NeuType.app/Contents/MacOS/NeuType"
+APP_BUNDLE_ID="ai.neuxnet.neutype.test"
+APP_DEBUG_APP="./build/Build/Products/Debug/NeuType-Test.app"
+APP_DEBUG_BINARY="${APP_DEBUG_APP}/Contents/MacOS/NeuType-Test"
 
 reset_app_permissions() {
     local services=("Microphone" "Accessibility" "ScreenCapture" "AppleEvents")
@@ -64,11 +65,11 @@ if [[ $? -eq 0 ]] && [[ ! "$BUILD_OUTPUT" =~ "BUILD FAILED" ]]; then
         exit 0
     fi
     echo "Resetting macOS permissions for ${APP_BUNDLE_ID}..."
-    pkill -x NeuType 2>/dev/null || true
+    pkill -x "NeuType-Test" 2>/dev/null || true
     reset_app_permissions
     echo "Starting the app..."
     # Remove quarantine attribute if exists
-    xattr -d com.apple.quarantine ./build/Build/Products/Debug/NeuType.app 2>/dev/null || true
+    xattr -d com.apple.quarantine "${APP_DEBUG_APP}" 2>/dev/null || true
     # Run the app and show logs
     "${APP_DEBUG_BINARY}"
 else

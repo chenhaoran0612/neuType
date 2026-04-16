@@ -4,7 +4,7 @@ enum MeetingDetailTab: String, CaseIterable, Equatable {
     case transcript
     case summary
 
-    static let displayOrder: [MeetingDetailTab] = [.transcript, .summary]
+    static let displayOrder: [MeetingDetailTab] = [.summary, .transcript]
 
     var title: String {
         switch self {
@@ -49,6 +49,7 @@ final class MeetingDetailViewModel: ObservableObject {
     private let summaryConfigProvider: MeetingSummaryConfigProviding
     private var recordsDidChangeObserver: NSObjectProtocol?
     private var isSummaryOperationInFlight = false
+    private var autoResumeFingerprint: String?
 
     init(
         meetingID: UUID,
@@ -88,15 +89,17 @@ final class MeetingDetailViewModel: ObservableObject {
     }
 
     func reload(resetActiveTab: Bool = false) async throws {
+        let previousMeeting = meeting
         meeting = try await store.fetchMeeting(id: meetingID)
         segments = try await store.fetchSegments(meetingID: meetingID)
         playbackCoordinator.setSegments(segments)
-        if resetActiveTab {
-            activeTab = .transcript
+        if let meeting {
+            syncActiveTab(previousMeeting: previousMeeting, currentMeeting: meeting, resetActiveTab: resetActiveTab)
         }
         if let meeting {
             if [.completed, .failed, .unsubmitted].contains(meeting.summaryStatus) {
                 isSummaryOperationInFlight = false
+                autoResumeFingerprint = nil
             } else {
                 resumeSummaryIfNeeded(for: meeting)
             }
@@ -146,7 +149,6 @@ final class MeetingDetailViewModel: ObservableObject {
 
             try await transcriptionService.transcribe(meetingID: meetingID, audioURL: meeting.audioURL)
             try await reload()
-            activeTab = .transcript
             MeetingLog.info("Transcript processing completed meetingID=\(meetingID)")
             if summaryConfigProvider.meetingSummaryConfig.isConfigured {
                 Task {
@@ -155,7 +157,6 @@ final class MeetingDetailViewModel: ObservableObject {
                         defer { isSummaryOperationInFlight = false }
                         try await summaryService.submitMeeting(meetingID: meetingID)
                         try await reload()
-                        activeTab = .summary
                     } catch {
                         MeetingLog.error("Meeting summary auto-submit failed meetingID=\(meetingID) error=\(error.localizedDescription)")
                     }
@@ -198,6 +199,7 @@ final class MeetingDetailViewModel: ObservableObject {
 
         do {
             isSummaryOperationInFlight = true
+            autoResumeFingerprint = nil
             defer { isSummaryOperationInFlight = false }
             try await store.updateSummaryStatus(meetingID: meetingID, status: .received)
             updateMeetingSummaryLocally(status: .received, errorMessage: "")
@@ -273,6 +275,24 @@ final class MeetingDetailViewModel: ObservableObject {
         meeting?.decodedSummaryResult
     }
 
+    var transcriptProcessingMessage: String {
+        let message = meeting?.transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return message.isEmpty ? "正在调用转写服务生成文字记录和说话人分段，请稍候。" : message
+    }
+
+    var transcriptProgress: Float {
+        max(0, min(meeting?.progress ?? 0, 1))
+    }
+
+    var transcriptRequestLogs: [RequestLogEntry] {
+        Array(
+            RequestLogStore.shared.entries
+                .filter { $0.kind == .asr }
+                .reversed()
+                .prefix(20)
+        )
+    }
+
     var summaryText: String {
         meeting?.summaryText ?? ""
     }
@@ -307,17 +327,20 @@ final class MeetingDetailViewModel: ObservableObject {
         guard [.received, .queued, .processing].contains(meeting.summaryStatus) else { return }
         guard !meeting.summaryJobID.isEmpty else { return }
         guard !isSummaryOperationInFlight else { return }
+        let fingerprint = summaryResumeFingerprint(for: meeting)
+        guard autoResumeFingerprint != fingerprint else { return }
 
         isSummaryOperationInFlight = true
+        autoResumeFingerprint = fingerprint
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { isSummaryOperationInFlight = false }
             do {
                 MeetingLog.info("Meeting summary resume requested meetingID=\(meetingID) jobID=\(meeting.summaryJobID)")
                 try await summaryService.resumeMeeting(meetingID: meetingID)
-                try await reload()
             } catch {
                 let message = error.localizedDescription
+                autoResumeFingerprint = nil
                 try? await store.updateSummaryStatus(
                     meetingID: meetingID,
                     status: .failed,
@@ -349,5 +372,42 @@ final class MeetingDetailViewModel: ObservableObject {
         meeting.summaryStatus = status
         meeting.summaryErrorMessage = errorMessage
         self.meeting = meeting
+    }
+
+    private func syncActiveTab(
+        previousMeeting: MeetingRecord?,
+        currentMeeting: MeetingRecord,
+        resetActiveTab: Bool
+    ) {
+        if resetActiveTab {
+            activeTab = preferredTab(for: currentMeeting)
+            return
+        }
+
+        if currentMeeting.status != .completed {
+            activeTab = .transcript
+            return
+        }
+
+        let summaryIsAvailable = [.received, .queued, .processing, .completed].contains(currentMeeting.summaryStatus)
+        let summaryJustBecameAvailable = ![.received, .queued, .processing, .completed].contains(previousMeeting?.summaryStatus ?? .unsubmitted)
+            && summaryIsAvailable
+        let summaryJustCompleted = previousMeeting?.summaryStatus != .completed && currentMeeting.summaryStatus == .completed
+
+        if summaryJustBecameAvailable || summaryJustCompleted {
+            activeTab = .summary
+        }
+    }
+
+    private func preferredTab(for meeting: MeetingRecord) -> MeetingDetailTab {
+        if meeting.status == .completed,
+           [.received, .queued, .processing, .completed].contains(meeting.summaryStatus) {
+            return .summary
+        }
+        return .transcript
+    }
+
+    private func summaryResumeFingerprint(for meeting: MeetingRecord) -> String {
+        "\(meeting.summaryJobID)|\(meeting.summaryStatus.rawValue)"
     }
 }

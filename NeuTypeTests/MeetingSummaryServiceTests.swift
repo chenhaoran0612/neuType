@@ -101,6 +101,47 @@ final class MeetingSummaryServiceTests: XCTestCase {
         XCTAssertEqual(saved?.summaryStatus, .completed)
     }
 
+    func testResumeMeetingStartsOnlyOneBackgroundPollPerMeeting() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = makeMeeting(
+            transcriptPreview: "hello world",
+            status: .completed,
+            summaryStatus: .queued,
+            summaryJobID: "job-existing"
+        )
+        try await store.insertMeeting(meeting, segments: [
+            makeSegment(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                startTime: 0,
+                endTime: 2,
+                text: "hello world"
+            )
+        ])
+
+        let client = SlowStubMeetingSummaryClient(
+            response: .completed(
+                jobID: "job-existing",
+                externalMeetingID: meeting.id.uuidString,
+                taskID: "task-456",
+                summaryText: "摘要内容",
+                fullText: "# 会议纪要",
+                result: .fixture(),
+                shareURL: "https://ai-worker.neuxnet.com/share/job-existing"
+            )
+        )
+        let service = MeetingSummaryService(client: client, store: store, pollInterval: .zero, pollsInBackground: true)
+
+        try await service.resumeMeeting(meetingID: meeting.id)
+        try await service.resumeMeeting(meetingID: meeting.id)
+        try? await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(client.fetchCount, 1)
+        let saved = try await store.fetchMeeting(id: meeting.id)
+        XCTAssertEqual(saved?.summaryStatus, .completed)
+    }
+
     func testFailedMeetingRetryUsesFreshSubmissionIdentity() async throws {
         let store = try MeetingRecordStore.inMemory()
         let meeting = makeMeeting(
@@ -229,6 +270,25 @@ private final class StubMeetingSummaryClient: MeetingSummaryClientProtocol {
     func fetchMeeting(jobID: String) async throws -> MeetingSummaryPollResponse {
         fetchedJobIDs.append(jobID)
         return pollResponses.removeFirst()
+    }
+}
+
+private final class SlowStubMeetingSummaryClient: MeetingSummaryClientProtocol {
+    private let response: MeetingSummaryPollResponse
+    private(set) var fetchCount = 0
+
+    init(response: MeetingSummaryPollResponse) {
+        self.response = response
+    }
+
+    func submitMeeting(_ payload: MeetingSummarySubmissionPayload) async throws -> MeetingSummaryCreateResponse {
+        fatalError("submitMeeting should not be called in this test")
+    }
+
+    func fetchMeeting(jobID: String) async throws -> MeetingSummaryPollResponse {
+        fetchCount += 1
+        try? await Task.sleep(for: .milliseconds(50))
+        return response
     }
 }
 

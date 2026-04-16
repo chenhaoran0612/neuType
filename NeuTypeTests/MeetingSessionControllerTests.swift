@@ -137,11 +137,13 @@ final class MeetingSessionControllerTests: XCTestCase {
         let overlayController = StubMeetingOverlayController()
         let windowController = StubMeetingMainWindowController()
         let meetingWindowController = StubMeetingHistoryWindowController()
+        let alertPresenter = StubMeetingCompletionAlertPresenter()
         let controller = MeetingSessionController(
             recorderViewModel: MeetingRecorderViewModel(),
             overlayController: overlayController,
             mainWindowController: windowController,
-            meetingWindowController: meetingWindowController
+            meetingWindowController: meetingWindowController,
+            completionAlertPresenter: alertPresenter
         )
         let meetingID = UUID()
         controller.present()
@@ -159,6 +161,50 @@ final class MeetingSessionControllerTests: XCTestCase {
             overlayController.events,
             [.showRecordingBar, .hideOverlay]
         )
+        XCTAssertTrue(alertPresenter.alertedMeetingTitles.isEmpty)
+    }
+
+    @MainActor
+    func testSummaryCompletionShowsCompletionAlert() async throws {
+        let overlayController = StubMeetingOverlayController()
+        let windowController = StubMeetingMainWindowController()
+        let meetingWindowController = StubMeetingHistoryWindowController()
+        let alertPresenter = StubMeetingCompletionAlertPresenter()
+        let store = try MeetingRecordStore.inMemory()
+        let meetingID = UUID()
+        let meeting = MeetingRecord(
+            id: meetingID,
+            createdAt: Date(),
+            title: "客户周会",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 1,
+            summaryStatus: .processing
+        )
+        try await store.insertMeeting(meeting, segments: [])
+
+        let controller = MeetingSessionController(
+            recorderViewModel: MeetingRecorderViewModel(),
+            overlayController: overlayController,
+            mainWindowController: windowController,
+            meetingWindowController: meetingWindowController,
+            store: store,
+            completionAlertPresenter: alertPresenter
+        )
+
+        controller.handleRecorderStateDidChange(.completed(meetingID))
+        try await store.updateSummaryResult(
+            meetingID: meetingID,
+            summaryText: "总结",
+            fullText: "# 总结",
+            result: .summaryFixture(),
+            shareURL: "https://example.com/share"
+        )
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(alertPresenter.alertedMeetingTitles, ["客户周会"])
     }
 
     @MainActor
@@ -209,6 +255,15 @@ final class MeetingSessionControllerTests: XCTestCase {
         XCTAssertFalse(controller.isPresented)
         XCTAssertEqual(meetingWindowController.hideCalls, 1)
         XCTAssertEqual(windowController.showCalls, 1)
+    }
+}
+
+@MainActor
+private final class StubMeetingCompletionAlertPresenter: MeetingCompletionAlertPresenting {
+    private(set) var alertedMeetingTitles: [String] = []
+
+    func showCompletionAlert(meetingTitle: String) {
+        alertedMeetingTitles.append(meetingTitle)
     }
 }
 
@@ -318,4 +373,21 @@ private final class ShortcutStubMeetingRecorder: MeetingRecording {
     }
 
     func cancelRecording() {}
+}
+
+private extension MeetingSummaryResult {
+    static func summaryFixture() -> MeetingSummaryResult {
+        MeetingSummaryResult(
+            meetingTitle: "客户周会",
+            meetingStartedAt: Date(timeIntervalSince1970: 100),
+            meetingEndedAt: Date(timeIntervalSince1970: 200),
+            summary: "总结内容",
+            keyPoints: ["要点 1"],
+            actionItems: [
+                MeetingSummaryActionItem(owner: "我方团队", task: "跟进 Demo", dueAt: "本周")
+            ],
+            risks: ["风险 1"],
+            shareSummary: "一句话摘要"
+        )
+    }
 }

@@ -2,7 +2,6 @@ import AVFoundation
 import AppKit
 import Foundation
 import CoreGraphics
-import ScreenCaptureKit
 
 enum Permission {
     case microphone
@@ -50,8 +49,6 @@ class PermissionsManager: ObservableObject {
 
     private var permissionCheckTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
-    private var isProbingScreenRecordingPermission = false
-    private var lastScreenRecordingProbeAt: Date?
 
     init() {
         checkMicrophonePermission()
@@ -144,32 +141,26 @@ class PermissionsManager: ObservableObject {
     }
 
     func checkScreenRecordingPermission() {
-        let granted: Bool
+        let preflightGranted: Bool
         if #available(macOS 10.15, *) {
-            granted = CGPreflightScreenCaptureAccess()
+            preflightGranted = CGPreflightScreenCaptureAccess()
         } else {
-            granted = true
+            preflightGranted = true
         }
 
-        if granted {
+        let requiresRelaunch = AppPreferences.shared.screenRecordingPermissionPendingRelaunch
+        RequestLogStore.log(
+            .usage,
+            "Screen recording preflight granted=\(preflightGranted) pendingRelaunch=\(requiresRelaunch)"
+        )
+
+        if preflightGranted {
             DispatchQueue.main.async { [weak self] in
                 AppPreferences.shared.didPromptForScreenRecordingPermission = false
                 AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
-                self?.lastScreenRecordingProbeAt = nil
                 self?.isScreenRecordingPermissionGranted = true
                 self?.screenRecordingPermissionState = .granted
             }
-            return
-        }
-
-        if #available(macOS 14.0, *) {
-            let now = Date()
-            if let lastProbeAt = lastScreenRecordingProbeAt,
-               now.timeIntervalSince(lastProbeAt) < 2 {
-                return
-            }
-            lastScreenRecordingProbeAt = now
-            probeScreenRecordingPermission()
             return
         }
 
@@ -177,7 +168,7 @@ class PermissionsManager: ObservableObject {
             self?.isScreenRecordingPermissionGranted = false
             self?.screenRecordingPermissionState = ScreenRecordingPermissionState.resolve(
                 isGranted: false,
-                requiresRelaunch: AppPreferences.shared.screenRecordingPermissionPendingRelaunch
+                requiresRelaunch: requiresRelaunch
             )
         }
     }
@@ -207,15 +198,19 @@ class PermissionsManager: ObservableObject {
             let preflightGranted = CGPreflightScreenCaptureAccess()
             let requestGranted: Bool?
 
-            if !preflightGranted {
-                AppPreferences.shared.didPromptForScreenRecordingPermission = true
-                requestGranted = CGRequestScreenCaptureAccess()
-                AppPreferences.shared.screenRecordingPermissionPendingRelaunch = requestGranted == true
-            } else {
+            if preflightGranted {
                 isScreenRecordingPermissionGranted = true
                 screenRecordingPermissionState = .granted
                 AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
                 requestGranted = nil
+            } else if AppPreferences.shared.screenRecordingPermissionPendingRelaunch {
+                isScreenRecordingPermissionGranted = false
+                screenRecordingPermissionState = .needsRelaunch
+                requestGranted = true
+            } else {
+                AppPreferences.shared.didPromptForScreenRecordingPermission = true
+                requestGranted = CGRequestScreenCaptureAccess()
+                AppPreferences.shared.screenRecordingPermissionPendingRelaunch = requestGranted == true
             }
 
             requestAction = ScreenRecordingPermissionRequestAction.resolve(
@@ -237,58 +232,6 @@ class PermissionsManager: ObservableObject {
             openSystemPreferences(for: .screenRecording)
         case .relaunch:
             relaunchApplication()
-        }
-    }
-
-    private func probeScreenRecordingPermission() {
-        guard !isProbingScreenRecordingPermission else { return }
-        guard #available(macOS 14.0, *) else {
-            DispatchQueue.main.async { [weak self] in
-                self?.isScreenRecordingPermissionGranted = false
-                self?.screenRecordingPermissionState = ScreenRecordingPermissionState.resolve(
-                    isGranted: false,
-                    requiresRelaunch: AppPreferences.shared.screenRecordingPermissionPendingRelaunch
-                )
-            }
-            return
-        }
-
-        isProbingScreenRecordingPermission = true
-
-        Task(priority: .utility) { [weak self] in
-            let granted = await Self.canAccessScreenCaptureContent()
-            guard let self else { return }
-            await MainActor.run {
-                self.isProbingScreenRecordingPermission = false
-
-                if granted {
-                    AppPreferences.shared.didPromptForScreenRecordingPermission = false
-                    AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
-                    self.lastScreenRecordingProbeAt = nil
-                    self.isScreenRecordingPermissionGranted = true
-                    self.screenRecordingPermissionState = .granted
-                } else {
-                    self.isScreenRecordingPermissionGranted = false
-                    self.screenRecordingPermissionState = ScreenRecordingPermissionState.resolve(
-                        isGranted: false,
-                        requiresRelaunch: AppPreferences.shared.screenRecordingPermissionPendingRelaunch
-                    )
-                }
-            }
-        }
-    }
-
-    @available(macOS 14.0, *)
-    private static func canAccessScreenCaptureContent() async -> Bool {
-        do {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
-            )
-            return !content.displays.isEmpty
-        } catch {
-            RequestLogStore.log(.usage, "Screen capture permission probe failed: \(error.localizedDescription)")
-            return false
         }
     }
 

@@ -48,6 +48,10 @@ class SettingsViewModel: ObservableObject {
         didSet { AppPreferences.shared.meetingVibeVoiceAPIPrefix = meetingVibeVoiceAPIPrefix }
     }
 
+    @Published var meetingVibeVoiceAPIKey: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceAPIKey = meetingVibeVoiceAPIKey }
+    }
+
     @Published var meetingVibeVoiceContextInfo: String {
         didSet { AppPreferences.shared.meetingVibeVoiceContextInfo = meetingVibeVoiceContextInfo }
     }
@@ -103,6 +107,7 @@ class SettingsViewModel: ObservableObject {
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
         meetingVibeVoiceBaseURL = meetingConfig.baseURL
         meetingVibeVoiceAPIPrefix = meetingConfig.apiPrefix
+        meetingVibeVoiceAPIKey = AppPreferences.shared.meetingVibeVoiceAPIKey
         meetingVibeVoiceContextInfo = meetingConfig.contextInfo
         meetingVibeVoiceMaxNewTokens = Double(meetingConfig.maxNewTokens)
         meetingVibeVoiceTemperature = meetingConfig.temperature
@@ -368,19 +373,24 @@ private struct GeneralSettingsTabView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Meeting transcription uses the remote VibeVoice ASR Gradio API. Configure the API endpoint and default decoding parameters here.")
+                        Text("Meeting transcription uses the remote VibeVoice ASR OpenAI-compatible Chat Completions API. Base URL usually stays as https://tokenhubpro.com. You can also paste the full endpoint https://tokenhubpro.com/v1/chat/completions directly, and API Prefix is typically left empty.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 
                         LabeledInputField(
                             title: "Base URL",
-                            placeholder: "http://workspace.featurize.cn:12930",
+                            placeholder: "https://tokenhubpro.com",
                             text: $viewModel.meetingVibeVoiceBaseURL
                         )
                         LabeledInputField(
                             title: "API Prefix",
-                            placeholder: "/gradio_api",
+                            placeholder: "(optional)",
                             text: $viewModel.meetingVibeVoiceAPIPrefix
+                        )
+                        LabeledInputField(
+                            title: "API Key",
+                            placeholder: "VibeVoice service key",
+                            text: $viewModel.meetingVibeVoiceAPIKey
                         )
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Context Info")
@@ -401,9 +411,12 @@ private struct GeneralSettingsTabView: View {
                                 Text("Max New Tokens")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Slider(value: $viewModel.meetingVibeVoiceMaxNewTokens, in: 4096...65536, step: 4096)
+                                Slider(value: $viewModel.meetingVibeVoiceMaxNewTokens, in: 512...16384, step: 256)
                                 Text("\(Int(viewModel.meetingVibeVoiceMaxNewTokens))")
                                     .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                                Text("Recommended: 8192 for tokenhubpro.")
+                                    .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
 

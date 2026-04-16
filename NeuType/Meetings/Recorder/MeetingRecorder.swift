@@ -197,12 +197,7 @@ final class MeetingRecorder: NSObject, MeetingRecording {
         let sourceURLs = session.availableSourceURLs()
         guard !sourceURLs.isEmpty else { throw MeetingRecorderError.noAudioCaptured }
 
-        let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: false
-        )!
+        let outputFormat = Self.makeFinalOutputFormat()
         let outputURL = session.finalOutputURL
         try FileManager.default.createDirectory(
             at: outputURL.deletingLastPathComponent(),
@@ -271,6 +266,15 @@ final class MeetingRecorder: NSObject, MeetingRecording {
 
         engine.stop()
         return outputURL
+    }
+
+    static func makeFinalOutputFormat() -> AVAudioFormat {
+        AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: false
+        )!
     }
 
     private func cleanup(session: ActiveSession, removeFinalOutput: Bool) {

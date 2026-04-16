@@ -101,16 +101,19 @@ final class AppPreferences {
     @UserDefault(key: "llmModel", defaultValue: "openai/gpt-oss-20b")
     var llmModel: String
 
-    @UserDefault(key: "meetingVibeVoiceBaseURL", defaultValue: "http://workspace.featurize.cn:12930")
+    @UserDefault(key: "meetingVibeVoiceBaseURL", defaultValue: "https://tokenhubpro.com")
     var meetingVibeVoiceBaseURL: String
 
-    @UserDefault(key: "meetingVibeVoiceAPIPrefix", defaultValue: "/gradio_api")
+    @UserDefault(key: "meetingVibeVoiceAPIPrefix", defaultValue: "")
     var meetingVibeVoiceAPIPrefix: String
+
+    @UserDefault(key: "meetingVibeVoiceAPIKey", defaultValue: "")
+    var meetingVibeVoiceAPIKey: String
 
     @UserDefault(key: "meetingVibeVoiceContextInfo", defaultValue: "")
     var meetingVibeVoiceContextInfo: String
 
-    @UserDefault(key: "meetingVibeVoiceMaxNewTokens", defaultValue: 16384)
+    @UserDefault(key: "meetingVibeVoiceMaxNewTokens", defaultValue: 8192)
     var meetingVibeVoiceMaxNewTokens: Int
 
     @UserDefault(key: "meetingVibeVoiceTemperature", defaultValue: 0.0)

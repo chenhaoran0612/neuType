@@ -5,7 +5,25 @@ protocol MeetingSummarizing {
     func resumeMeeting(meetingID: UUID) async throws
 }
 
+private actor MeetingSummaryPollingRegistry {
+    private var activeTokens: [UUID: UUID] = [:]
+
+    func begin(meetingID: UUID) -> UUID? {
+        guard activeTokens[meetingID] == nil else { return nil }
+        let token = UUID()
+        activeTokens[meetingID] = token
+        return token
+    }
+
+    func end(meetingID: UUID, token: UUID) {
+        guard activeTokens[meetingID] == token else { return }
+        activeTokens.removeValue(forKey: meetingID)
+    }
+}
+
 final class MeetingSummaryService: MeetingSummarizing {
+    private static let pollingRegistry = MeetingSummaryPollingRegistry()
+
     private let client: MeetingSummaryClientProtocol
     private let store: MeetingRecordStore
     private let pollInterval: Duration
@@ -70,7 +88,7 @@ final class MeetingSummaryService: MeetingSummarizing {
         )
 
         if pollsInBackground {
-            startBackgroundPoll(meetingID: meetingID, jobID: createResponse.jobID)
+            _ = await startBackgroundPoll(meetingID: meetingID, jobID: createResponse.jobID, source: "submit")
         } else {
             try await pollUntilFinished(meetingID: meetingID, jobID: createResponse.jobID)
         }
@@ -93,16 +111,29 @@ final class MeetingSummaryService: MeetingSummarizing {
             return
         }
 
-        MeetingLog.info("Meeting summary resume polling meetingID=\(meetingID) jobID=\(meeting.summaryJobID)")
         if pollsInBackground {
-            startBackgroundPoll(meetingID: meetingID, jobID: meeting.summaryJobID)
+            _ = await startBackgroundPoll(meetingID: meetingID, jobID: meeting.summaryJobID, source: "resume")
         } else {
+            MeetingLog.info("Meeting summary resume polling meetingID=\(meetingID) jobID=\(meeting.summaryJobID)")
             try await pollUntilFinished(meetingID: meetingID, jobID: meeting.summaryJobID)
         }
     }
 
-    private func startBackgroundPoll(meetingID: UUID, jobID: String) {
-        Task.detached(priority: .background) { [client, store, pollInterval, maxPollCount] in
+    @discardableResult
+    private func startBackgroundPoll(meetingID: UUID, jobID: String, source: String) async -> Bool {
+        guard let token = await Self.pollingRegistry.begin(meetingID: meetingID) else {
+            MeetingLog.info("Meeting summary poll already active, skip source=\(source) meetingID=\(meetingID) jobID=\(jobID)")
+            return false
+        }
+
+        MeetingLog.info("Meeting summary poll started source=\(source) meetingID=\(meetingID) jobID=\(jobID)")
+        Task(priority: .background) { [client, store, pollInterval, maxPollCount] in
+            defer {
+                Task {
+                    await Self.pollingRegistry.end(meetingID: meetingID, token: token)
+                }
+            }
+
             let backgroundService = MeetingSummaryService(
                 client: client,
                 store: store,
@@ -113,10 +144,14 @@ final class MeetingSummaryService: MeetingSummarizing {
 
             do {
                 try await backgroundService.pollUntilFinished(meetingID: meetingID, jobID: jobID)
+                MeetingLog.info("Meeting summary poll finished meetingID=\(meetingID) jobID=\(jobID)")
+            } catch is CancellationError {
+                MeetingLog.info("Meeting summary poll cancelled meetingID=\(meetingID) jobID=\(jobID)")
             } catch {
                 MeetingLog.error("Meeting summary background poll failed meetingID=\(meetingID) jobID=\(jobID) error=\(error.localizedDescription)")
             }
         }
+        return true
     }
 
     private func pollUntilFinished(meetingID: UUID, jobID: String) async throws {

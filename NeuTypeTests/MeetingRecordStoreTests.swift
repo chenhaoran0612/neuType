@@ -144,6 +144,31 @@ final class MeetingRecordStoreTests: XCTestCase {
         XCTAssertEqual(saved?.summaryShareURL, "https://ai-worker.neuxnet.com/share/abc")
         XCTAssertEqual(saved?.decodedSummaryResult, result)
     }
+
+    @MainActor
+    func testUpdateSummaryStatusDoesNotPostDuplicateNotificationWhenValueIsUnchanged() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = makeMeeting(transcriptPreview: "hello world", status: .completed)
+        try await store.insertMeeting(meeting, segments: [])
+
+        var notificationCount = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: .meetingRecordsDidChange,
+            object: nil,
+            queue: .main
+        ) { _ in
+            notificationCount += 1
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+
+        try await store.updateSummaryStatus(meetingID: meeting.id, status: .processing)
+        try await store.updateSummaryStatus(meetingID: meeting.id, status: .processing)
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(notificationCount, 1)
+    }
 }
 
 private func makeMeeting(

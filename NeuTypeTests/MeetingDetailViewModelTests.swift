@@ -104,6 +104,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         viewModel.startTranscriptProcessing()
 
         XCTAssertEqual(viewModel.transcriptState, .processing)
+        try? await Task.sleep(for: .milliseconds(50))
 
         let processingMeeting = try await store.fetchMeeting(id: meeting.id)
         XCTAssertEqual(processingMeeting?.status, .processing)
@@ -137,7 +138,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDefaultsToAudioTabAfterLoad() async throws {
+    func testCompletedMeetingKeepsTranscriptAsDefaultUntilSummaryStarts() async throws {
         let meeting = MeetingRecord.fixture(status: .completed)
         let store = try MeetingRecordStore.inMemory()
         try await store.insertMeeting(meeting, segments: [
@@ -159,8 +160,33 @@ final class MeetingDetailViewModelTests: XCTestCase {
 
         try await viewModel.load()
 
-        XCTAssertEqual(viewModel.activeTab, .audio)
+        XCTAssertEqual(viewModel.activeTab, .transcript)
         XCTAssertEqual(viewModel.segments.count, 1)
+    }
+
+    @MainActor
+    func testProcessTranscriptAutoSwitchesToSummaryTabAfterSubmittingSummary() async throws {
+        let meeting = MeetingRecord.fixture(status: .unprocessed)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+        let transcriber = StubMeetingTranscriber(store: store)
+        let summaryService = StubMeetingSummaryService(store: store)
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store,
+            transcriptionService: transcriber,
+            summaryService: summaryService,
+            summaryConfigProvider: StubMeetingSummaryConfigProvider(isConfigured: true)
+        )
+
+        try await viewModel.load()
+        await viewModel.processTranscript()
+        try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(viewModel.activeTab, .summary)
+        XCTAssertEqual(summaryService.submittedMeetingIDs, [meeting.id])
     }
 
     @MainActor
@@ -196,6 +222,42 @@ final class MeetingDetailViewModelTests: XCTestCase {
 
         XCTAssertEqual(summaryService.resumedMeetingIDs, [meeting.id])
         XCTAssertEqual(viewModel.summaryState, .completed)
+    }
+
+    @MainActor
+    func testReloadDoesNotResumeSameSummaryJobMoreThanOnce() async throws {
+        let meeting = MeetingRecord.fixture(
+            status: .completed,
+            summaryStatus: .queued,
+            summaryJobID: "job-queued"
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                startTime: 0,
+                endTime: 1,
+                text: "hello world"
+            )
+        ])
+        let summaryService = DelayedStubMeetingSummaryService()
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store,
+            summaryService: summaryService,
+            summaryConfigProvider: StubMeetingSummaryConfigProvider(isConfigured: true)
+        )
+
+        try await viewModel.load()
+        try await viewModel.reload()
+        try await viewModel.reload()
+        try? await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(summaryService.resumedMeetingIDs, [meeting.id])
     }
 
     @MainActor
@@ -258,6 +320,34 @@ final class MeetingDetailViewModelTests: XCTestCase {
         viewModel.searchText = "秘密"
 
         XCTAssertEqual(viewModel.filteredSegments.map(\.sequence), [1])
+    }
+
+    @MainActor
+    func testTranscriptRequestLogsExposeMostRecentASREntries() async throws {
+        RequestLogStore.shared.clear()
+        RequestLogStore.shared.add(.usage, "Meeting: something else")
+        RequestLogStore.shared.add(.asr, "Meeting ASR chunk started 1 / 3")
+        RequestLogStore.shared.add(.asr, "Meeting ASR chunk timeout 2 / 3")
+
+        let meeting = MeetingRecord.fixture(status: .processing)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertEqual(
+            viewModel.transcriptRequestLogs.map(\.message),
+            [
+                "Meeting ASR chunk timeout 2 / 3",
+                "Meeting ASR chunk started 1 / 3",
+            ]
+        )
     }
 
     @MainActor
@@ -411,6 +501,7 @@ private final class StubMeetingSummaryService: MeetingSummarizing {
 
     func submitMeeting(meetingID: UUID) async throws {
         submittedMeetingIDs.append(meetingID)
+        try await store.updateSummaryStatus(meetingID: meetingID, status: .received)
     }
 
     func resumeMeeting(meetingID: UUID) async throws {
@@ -422,6 +513,17 @@ private final class StubMeetingSummaryService: MeetingSummarizing {
             result: .summaryFixture(),
             shareURL: "https://ai-worker.neuxnet.com/share/resumed"
         )
+    }
+}
+
+private final class DelayedStubMeetingSummaryService: MeetingSummarizing {
+    var resumedMeetingIDs: [UUID] = []
+
+    func submitMeeting(meetingID: UUID) async throws {}
+
+    func resumeMeeting(meetingID: UUID) async throws {
+        resumedMeetingIDs.append(meetingID)
+        try? await Task.sleep(for: .milliseconds(80))
     }
 }
 

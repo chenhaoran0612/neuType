@@ -66,8 +66,20 @@ final class MeetingOverlayWindowManager: NSObject, MeetingOverlayControlling, NS
         window.setContentSize(size)
         window.setFrame(frame, display: false)
         MeetingLog.info("Overlay frontmost app before show=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil") activationPolicy=\(NSApp.activationPolicy().rawValue)")
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.level = .popUpMenu
         window.orderFrontRegardless()
+        window.makeKey()
+        window.invalidateShadow()
         MeetingLog.info("Overlay visible=\(window.isVisible) key=\(window.isKeyWindow) main=\(window.isMainWindow) windowNumber=\(window.windowNumber) frontmostAppAfterShow=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak window] in
+            guard let window else { return }
+            if window.isVisible {
+                window.orderFrontRegardless()
+                window.makeKey()
+            }
+        }
     }
 
     private func installContent<Content: View>(
@@ -92,8 +104,8 @@ final class MeetingOverlayWindowManager: NSObject, MeetingOverlayControlling, NS
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -104,7 +116,7 @@ final class MeetingOverlayWindowManager: NSObject, MeetingOverlayControlling, NS
         panel.animationBehavior = .utilityWindow
         panel.becomesKeyOnlyIfNeeded = true
         panel.delegate = self
-        MeetingLog.info("Overlay panel configured level=statusBar behavior=canJoinAllSpaces+fullScreenAuxiliary+ignoresCycle nonactivating=true")
+        MeetingLog.info("Overlay panel configured level=popUpMenu behavior=canJoinAllSpaces+moveToActiveSpace+fullScreenAuxiliary+ignoresCycle nonactivating=true")
         self.window = panel
         return panel
     }

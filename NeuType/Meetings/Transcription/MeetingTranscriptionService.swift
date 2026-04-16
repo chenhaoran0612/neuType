@@ -17,7 +17,14 @@ final class MeetingTranscriptionService: MeetingTranscribing {
     }
 
     func transcribe(meetingID: UUID, audioURL: URL) async throws {
-        let result = try await runner.transcribe(audioURL: audioURL, hotwords: [])
+        let result = try await runner.transcribe(audioURL: audioURL, hotwords: []) { [store] progress in
+            try? await store.updateMeetingStatus(
+                meetingID: meetingID,
+                status: .processing,
+                progress: progress.fractionCompleted,
+                transcriptPreview: progress.message
+            )
+        }
         try await store.updateTranscription(
             meetingID: meetingID,
             fullText: result.fullText,

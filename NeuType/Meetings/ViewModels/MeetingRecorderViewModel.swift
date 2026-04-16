@@ -95,17 +95,8 @@ final class MeetingRecorderViewModel: ObservableObject {
                 progress: 0
             )
             try await store.insertMeeting(meeting, segments: [])
-            try await transcriptionService.transcribe(meetingID: meetingID, audioURL: audioURL)
-            if AppPreferences.shared.meetingSummaryConfig.isConfigured {
-                Task {
-                    do {
-                        try await summaryService.submitMeeting(meetingID: meetingID)
-                    } catch {
-                        MeetingLog.error("Meeting summary auto-submit failed after recording meetingID=\(meetingID) error=\(error.localizedDescription)")
-                    }
-                }
-            }
             state = .completed(meetingID)
+            startPostProcessing(for: meetingID, audioURL: audioURL)
         } catch {
             MeetingLog.error("stopRecording failed: \(error.localizedDescription)")
             state = .failed(error.localizedDescription)
@@ -154,6 +145,34 @@ final class MeetingRecorderViewModel: ObservableObject {
             return 0
         }
         return Double(audioFile.length) / audioFile.processingFormat.sampleRate
+    }
+
+    private func startPostProcessing(for meetingID: UUID, audioURL: URL) {
+        Task { [store, transcriptionService, summaryService] in
+            do {
+                MeetingLog.info("Meeting post-processing start meetingID=\(meetingID)")
+                try await transcriptionService.transcribe(meetingID: meetingID, audioURL: audioURL)
+                MeetingLog.info("Meeting transcription completed meetingID=\(meetingID)")
+
+                if AppPreferences.shared.meetingSummaryConfig.isConfigured {
+                    do {
+                        try await summaryService.submitMeeting(meetingID: meetingID)
+                        MeetingLog.info("Meeting summary auto-submit succeeded meetingID=\(meetingID)")
+                    } catch {
+                        MeetingLog.error("Meeting summary auto-submit failed after recording meetingID=\(meetingID) error=\(error.localizedDescription)")
+                    }
+                }
+            } catch {
+                let message = error.localizedDescription
+                MeetingLog.error("Meeting transcription failed after recording meetingID=\(meetingID) error=\(message)")
+                try? await store.updateMeetingStatus(
+                    meetingID: meetingID,
+                    status: .failed,
+                    progress: 0,
+                    transcriptPreview: message
+                )
+            }
+        }
     }
 
 }

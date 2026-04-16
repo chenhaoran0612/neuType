@@ -25,7 +25,11 @@ final class MeetingTranscriptionServiceTests: XCTestCase {
 private struct StubVibeVoiceRunnerClient: VibeVoiceRunning {
     let result: MeetingTranscriptionResult
 
-    func transcribe(audioURL: URL, hotwords: [String]) async throws -> MeetingTranscriptionResult {
+    func transcribe(
+        audioURL: URL,
+        hotwords: [String],
+        progress: (@Sendable (MeetingTranscriptionProgress) async -> Void)?
+    ) async throws -> MeetingTranscriptionResult {
         result
     }
 }
