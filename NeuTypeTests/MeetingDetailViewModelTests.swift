@@ -288,6 +288,269 @@ final class MeetingDetailViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSummaryFullTextDoesNotFallbackToSummaryText() async throws {
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "这是旧 summary",
+            summaryFullText: "",
+            summaryResultJSON: "",
+            summaryShareURL: "",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertEqual(viewModel.summaryText, "这是旧 summary")
+        XCTAssertEqual(viewModel.summaryFullText, "")
+    }
+
+    @MainActor
+    func testSummaryFullTextStripsLegacyDeliverableWrapperAndUsesFullTextOnly() async throws {
+        let wrappedFullText = """
+        I've completed the meeting notes. Here's the deliverable and summary:
+
+        ---
+
+        ## 📄 Deliverable: Meeting Notes File
+
+        **File**: `workspace/meeting_notes_20260415.md`
+
+        The full Markdown file includes:
+        - Meeting Brief
+
+        ---
+
+        ## 📋 Summary Message
+
+        ### Meeting Brief
+        真正的总结正文
+        """
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "这是旧 summary",
+            summaryFullText: wrappedFullText,
+            summaryResultJSON: "",
+            summaryShareURL: "",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.summaryFullText.hasPrefix("## 📋 Summary Message"))
+        XCTAssertFalse(viewModel.summaryFullText.contains("## 📄 Deliverable: Meeting Notes File"))
+        XCTAssertFalse(viewModel.summaryFullText.contains("这是旧 summary"))
+        XCTAssertTrue(viewModel.summaryFullText.contains("真正的总结正文"))
+    }
+
+    @MainActor
+    func testSummaryFullTextStripsDoneDeliverableWrapperAndUsesSummarySection() async throws {
+        let wrappedFullText = """
+        Done. Here's the deliverable and summary:
+
+        ---
+
+        ## 📄 Deliverable
+
+        **File:** `workspace/meeting_minutes_2026-04-16_18-16.md`
+
+        ---
+
+        ## 📋 Summary
+
+        ### Meeting Brief
+        真正的 full_text 正文
+        """
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "这是旧 summary",
+            summaryFullText: wrappedFullText,
+            summaryResultJSON: "",
+            summaryShareURL: "",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.summaryFullText.hasPrefix("## 📋 Summary"))
+        XCTAssertFalse(viewModel.summaryFullText.contains("## 📄 Deliverable"))
+        XCTAssertTrue(viewModel.summaryFullText.contains("真正的 full_text 正文"))
+    }
+
+    @MainActor
+    func testSummaryFullTextStripsIndexedDeliverableWrapperAndUsesSummarySection() async throws {
+        let wrappedFullText = """
+        Here are the results:
+
+        ---
+
+        ## 1. Deliverable
+
+        The full meeting notes Markdown file has been saved to:
+        **`workspace/meeting_notes/2026-04-16_0904_hermes_agent_closed_loop.md`**
+
+        ---
+
+        ## 2. Summary Message
+
+        ### 📋 Meeting Brief
+        真正的 full_text 正文
+        """
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "这是旧 summary",
+            summaryFullText: wrappedFullText,
+            summaryResultJSON: "",
+            summaryShareURL: "",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.summaryFullText.hasPrefix("## 2. Summary Message"))
+        XCTAssertFalse(viewModel.summaryFullText.contains("## 1. Deliverable"))
+        XCTAssertTrue(viewModel.summaryFullText.contains("真正的 full_text 正文"))
+    }
+
+    @MainActor
+    func testSummaryLogButtonStillShowsForHistoricalCompletedSummaryWithoutRawJSON() async throws {
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "旧 summary",
+            summaryFullText: "# 会议纪要",
+            summaryResultJSON: "",
+            summaryShareURL: "https://ai-worker.neuxnet.com/share/legacy",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.shouldShowSummaryLogButton)
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("日志采集上线之前"))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("重新生成一次总结"))
+    }
+
+    @MainActor
+    func testSummaryLogDisplayTextUsesPrettyPrintedRawJSONWhenAvailable() async throws {
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "Meeting",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryJobID: "",
+            summaryText: "旧 summary",
+            summaryFullText: "# 会议纪要",
+            summaryResultJSON: "",
+            summaryLastResponseJSON: #"{"job_id":"job-123","status":"completed"}"#,
+            summaryShareURL: "https://ai-worker.neuxnet.com/share/legacy",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.shouldShowSummaryLogButton)
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"job_id\" : \"job-123\""))
+        XCTAssertFalse(viewModel.summaryLogDisplayText.contains("日志采集上线之前"))
+    }
+
+    @MainActor
     func testTranscriptSearchFiltersSegments() async throws {
         let meeting = MeetingRecord.fixture(status: .completed)
         let store = try MeetingRecordStore.inMemory()

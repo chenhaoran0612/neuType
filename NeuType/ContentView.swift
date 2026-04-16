@@ -966,10 +966,10 @@ struct PermissionsView: View {
                 id: .accessibility,
                 isGranted: permissionsManager.isAccessibilityPermissionGranted,
                 title: "Accessibility Access",
-                description: "Required for global keyboard shortcuts",
-                buttonTitle: permissionsManager.isAccessibilityPermissionGranted ? nil : "Grant Access",
+                description: accessibilityDescription(for: permissionsManager),
+                buttonTitle: accessibilityButtonTitle(for: permissionsManager),
                 action: {
-                    permissionsManager.openSystemPreferences(for: .accessibility)
+                    permissionsManager.requestAccessibilityPermissionOrOpenSystemPreferences()
                 }
             ),
             Item(
@@ -990,6 +990,28 @@ struct PermissionsView: View {
                 }
             )
         ]
+    }
+
+    static func accessibilityDescription(for permissionsManager: PermissionsManager) -> String {
+        switch permissionsManager.accessibilityPermissionState {
+        case .granted:
+            return "Required for global keyboard shortcuts"
+        case .needsAuthorization:
+            return "Required for global keyboard shortcuts"
+        case .needsRelaunch:
+            return "Required for global keyboard shortcuts"
+        }
+    }
+
+    static func accessibilityButtonTitle(for permissionsManager: PermissionsManager) -> String? {
+        switch permissionsManager.accessibilityPermissionState {
+        case .granted:
+            return nil
+        case .needsAuthorization:
+            return "Grant Access"
+        case .needsRelaunch:
+            return "Grant Access"
+        }
     }
 
     static func screenRecordingDescription(for permissionsManager: PermissionsManager) -> String {

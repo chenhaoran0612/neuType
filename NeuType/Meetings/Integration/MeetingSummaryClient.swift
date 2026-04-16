@@ -39,6 +39,7 @@ struct MeetingSummaryCreateResponse: Decodable, Equatable {
     let status: MeetingSummaryStatus
     let pollURL: String
     let externalMeetingID: String
+    let rawResponseJSON: String
 
     enum CodingKeys: String, CodingKey {
         case jobID = "job_id"
@@ -46,6 +47,36 @@ struct MeetingSummaryCreateResponse: Decodable, Equatable {
         case status
         case pollURL = "poll_url"
         case externalMeetingID = "external_meeting_id"
+    }
+
+    init(
+        jobID: String,
+        taskID: String,
+        status: MeetingSummaryStatus,
+        pollURL: String,
+        externalMeetingID: String,
+        rawResponseJSON: String = ""
+    ) {
+        self.jobID = jobID
+        self.taskID = taskID
+        self.status = status
+        self.pollURL = pollURL
+        self.externalMeetingID = externalMeetingID
+        self.rawResponseJSON = rawResponseJSON
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jobID = try container.decode(String.self, forKey: .jobID)
+        taskID = try container.decode(String.self, forKey: .taskID)
+        status = try container.decode(MeetingSummaryStatus.self, forKey: .status)
+        pollURL = try container.decode(String.self, forKey: .pollURL)
+        externalMeetingID = try container.decode(String.self, forKey: .externalMeetingID)
+        rawResponseJSON = ""
+    }
+
+    var debugSummary: String {
+        "jobID=\(jobID) taskID=\(taskID) status=\(status.rawValue) pollURL=\(pollURL) externalMeetingID=\(externalMeetingID)"
     }
 }
 
@@ -61,6 +92,7 @@ struct MeetingSummaryPollResponse: Decodable, Equatable {
     let shareURL: String
     let errorMessage: String
     let pollURL: String
+    let rawResponseJSON: String
     
     private struct LossySummaryResult: Decodable {
         let value: MeetingSummaryResult?
@@ -95,7 +127,8 @@ struct MeetingSummaryPollResponse: Decodable, Equatable {
         result: MeetingSummaryResult?,
         shareURL: String,
         errorMessage: String,
-        pollURL: String
+        pollURL: String,
+        rawResponseJSON: String = ""
     ) {
         self.jobID = jobID
         self.externalMeetingID = externalMeetingID
@@ -108,6 +141,7 @@ struct MeetingSummaryPollResponse: Decodable, Equatable {
         self.shareURL = shareURL
         self.errorMessage = errorMessage
         self.pollURL = pollURL
+        self.rawResponseJSON = rawResponseJSON
     }
 
     init(from decoder: Decoder) throws {
@@ -123,6 +157,11 @@ struct MeetingSummaryPollResponse: Decodable, Equatable {
         shareURL = try container.decodeIfPresent(String.self, forKey: .shareURL) ?? ""
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage) ?? ""
         pollURL = try container.decodeIfPresent(String.self, forKey: .pollURL) ?? ""
+        rawResponseJSON = ""
+    }
+
+    var debugSummary: String {
+        "jobID=\(jobID) taskID=\(taskID) status=\(status.rawValue) meetingTitle=\(meetingTitle) summaryTextLength=\(summaryText.count) fullTextLength=\(fullText.count) shareURL=\(shareURL) errorMessageLength=\(errorMessage.count) pollURL=\(pollURL) externalMeetingID=\(externalMeetingID)"
     }
 }
 
@@ -167,9 +206,21 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
 
         MeetingLog.info("Meeting summary submit request url=\(url.absoluteString) meetingID=\(payload.externalMeetingID)")
         let (data, response) = try await session.data(for: request)
-        try Self.ensureSuccess(response, data: data)
-        let result = try decoder.decode(MeetingSummaryCreateResponse.self, from: data)
-        MeetingLog.info("Meeting summary submit succeeded jobID=\(result.jobID) status=\(result.status.rawValue)")
+        let httpResponse = try Self.httpResponse(from: response)
+        MeetingLog.info(
+            "Meeting summary submit response statusCode=\(httpResponse.statusCode) bodyPreview=\(Self.bodyPreview(from: data))"
+        )
+        try Self.ensureSuccess(httpResponse, data: data)
+        let decoded = try decoder.decode(MeetingSummaryCreateResponse.self, from: data)
+        let result = MeetingSummaryCreateResponse(
+            jobID: decoded.jobID,
+            taskID: decoded.taskID,
+            status: decoded.status,
+            pollURL: decoded.pollURL,
+            externalMeetingID: decoded.externalMeetingID,
+            rawResponseJSON: Self.rawResponseJSON(from: data)
+        )
+        MeetingLog.info("Meeting summary submit decoded \(result.debugSummary)")
         return result
     }
 
@@ -188,9 +239,27 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
         request.setValue(config.trimmedAPIKey, forHTTPHeaderField: "X-Api-Key")
 
         let (data, response) = try await session.data(for: request)
-        try Self.ensureSuccess(response, data: data)
-        let result = try decoder.decode(MeetingSummaryPollResponse.self, from: data)
-        MeetingLog.info("Meeting summary poll jobID=\(jobID) status=\(result.status.rawValue)")
+        let httpResponse = try Self.httpResponse(from: response)
+        MeetingLog.info(
+            "Meeting summary poll response statusCode=\(httpResponse.statusCode) jobID=\(jobID) bodyPreview=\(Self.bodyPreview(from: data))"
+        )
+        try Self.ensureSuccess(httpResponse, data: data)
+        let decoded = try decoder.decode(MeetingSummaryPollResponse.self, from: data)
+        let result = MeetingSummaryPollResponse(
+            jobID: decoded.jobID,
+            externalMeetingID: decoded.externalMeetingID,
+            taskID: decoded.taskID,
+            status: decoded.status,
+            meetingTitle: decoded.meetingTitle,
+            summaryText: decoded.summaryText,
+            fullText: decoded.fullText,
+            result: decoded.result,
+            shareURL: decoded.shareURL,
+            errorMessage: decoded.errorMessage,
+            pollURL: decoded.pollURL,
+            rawResponseJSON: Self.rawResponseJSON(from: data)
+        )
+        MeetingLog.info("Meeting summary poll decoded \(result.debugSummary)")
         return result
     }
 
@@ -269,15 +338,39 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
         }
     }
 
-    private static func ensureSuccess(_ response: URLResponse, data: Data) throws {
+    private static func httpResponse(from response: URLResponse) throws -> HTTPURLResponse {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw MeetingSummaryClientError.invalidResponse
         }
+        return httpResponse
+    }
 
+    private static func ensureSuccess(_ httpResponse: HTTPURLResponse, data: Data) throws {
         guard (200..<300).contains(httpResponse.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? "Unknown server error"
+            MeetingLog.error(
+                "Meeting summary request failed statusCode=\(httpResponse.statusCode) bodyPreview=\(bodyPreview(from: data))"
+            )
             throw MeetingSummaryClientError.requestFailed(statusCode: httpResponse.statusCode, body: body)
         }
+    }
+
+    private static func bodyPreview(from data: Data, maxLength: Int = 1200) -> String {
+        let raw = String(data: data, encoding: .utf8) ?? "<non-utf8 body size=\(data.count)>"
+        let compact = raw
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard compact.count > maxLength else { return compact }
+        let index = compact.index(compact.startIndex, offsetBy: maxLength)
+        return "\(compact[..<index])…"
+    }
+
+    private static func rawResponseJSON(from data: Data) -> String {
+        String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
 }
 

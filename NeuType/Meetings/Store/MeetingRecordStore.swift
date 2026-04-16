@@ -108,6 +108,7 @@ final class MeetingRecordStore: ObservableObject {
                 t.column("summaryText", .text).notNull().defaults(to: "")
                 t.column("summaryFullText", .text).notNull().defaults(to: "")
                 t.column("summaryResultJSON", .text).notNull().defaults(to: "")
+                t.column("summaryLastResponseJSON", .text).notNull().defaults(to: "")
                 t.column("summaryShareURL", .text).notNull().defaults(to: "")
                 t.column("summaryErrorMessage", .text).notNull().defaults(to: "")
             }
@@ -137,6 +138,7 @@ final class MeetingRecordStore: ObservableObject {
                 ("summaryText", .text, ""),
                 ("summaryFullText", .text, ""),
                 ("summaryResultJSON", .text, ""),
+                ("summaryLastResponseJSON", .text, ""),
                 ("summaryShareURL", .text, ""),
                 ("summaryErrorMessage", .text, ""),
             ]
@@ -153,6 +155,14 @@ final class MeetingRecordStore: ObservableObject {
             guard !columns.contains("summaryFullText") else { return }
             try db.alter(table: MeetingRecord.databaseTableName) { table in
                 table.add(column: "summaryFullText", .text).notNull().defaults(to: "")
+            }
+        }
+
+        migrator.registerMigration("v4_add_summary_last_response_json") { db in
+            let columns = try db.columns(in: MeetingRecord.databaseTableName).map(\.name)
+            guard !columns.contains("summaryLastResponseJSON") else { return }
+            try db.alter(table: MeetingRecord.databaseTableName) { table in
+                table.add(column: "summaryLastResponseJSON", .text).notNull().defaults(to: "")
             }
         }
 
@@ -314,7 +324,8 @@ final class MeetingRecordStore: ObservableObject {
         externalMeetingID: String,
         jobID: String,
         taskID: String,
-        pollURL: String
+        pollURL: String,
+        responseJSON: String = ""
     ) async throws {
         let didChange = try await dbQueue.write { db -> Bool in
             guard let current = try MeetingRecord
@@ -329,6 +340,7 @@ final class MeetingRecordStore: ObservableObject {
                 || current.summaryJobID != jobID
                 || current.summaryTaskID != taskID
                 || current.summaryPollURL != pollURL
+                || current.summaryLastResponseJSON != responseJSON
                 || !current.summaryErrorMessage.isEmpty
 
             guard hasChanges else { return false }
@@ -341,6 +353,7 @@ final class MeetingRecordStore: ObservableObject {
                     MeetingRecord.Columns.summaryJobID.set(to: jobID),
                     MeetingRecord.Columns.summaryTaskID.set(to: taskID),
                     MeetingRecord.Columns.summaryPollURL.set(to: pollURL),
+                    MeetingRecord.Columns.summaryLastResponseJSON.set(to: responseJSON),
                     MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
                 ])
             return true
@@ -353,7 +366,8 @@ final class MeetingRecordStore: ObservableObject {
     nonisolated func updateSummaryStatus(
         meetingID: UUID,
         status: MeetingSummaryStatus,
-        errorMessage: String = ""
+        errorMessage: String = "",
+        responseJSON: String? = nil
     ) async throws {
         let didChange = try await dbQueue.write { db -> Bool in
             guard let current = try MeetingRecord
@@ -362,16 +376,24 @@ final class MeetingRecordStore: ObservableObject {
                 return false
             }
 
-            guard current.summaryStatus != status || current.summaryErrorMessage != errorMessage else {
+            var assignments: [ColumnAssignment] = [
+                MeetingRecord.Columns.summaryStatus.set(to: status.rawValue),
+                MeetingRecord.Columns.summaryErrorMessage.set(to: errorMessage),
+            ]
+            var hasChanges = current.summaryStatus != status || current.summaryErrorMessage != errorMessage
+
+            if let responseJSON {
+                hasChanges = hasChanges || current.summaryLastResponseJSON != responseJSON
+                assignments.append(MeetingRecord.Columns.summaryLastResponseJSON.set(to: responseJSON))
+            }
+
+            guard hasChanges else {
                 return false
             }
 
             _ = try MeetingRecord
                 .filter(MeetingRecord.Columns.id == meetingID)
-                .updateAll(db, [
-                    MeetingRecord.Columns.summaryStatus.set(to: status.rawValue),
-                    MeetingRecord.Columns.summaryErrorMessage.set(to: errorMessage),
-                ])
+                .updateAll(db, assignments)
             return true
         }
         if didChange {
@@ -384,7 +406,8 @@ final class MeetingRecordStore: ObservableObject {
         summaryText: String,
         fullText: String,
         result: MeetingSummaryResult,
-        shareURL: String
+        shareURL: String,
+        responseJSON: String = ""
     ) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -402,6 +425,7 @@ final class MeetingRecordStore: ObservableObject {
                 || current.summaryText != summaryText
                 || current.summaryFullText != fullText
                 || current.summaryResultJSON != resultJSON
+                || current.summaryLastResponseJSON != responseJSON
                 || current.summaryShareURL != shareURL
                 || !current.summaryErrorMessage.isEmpty
 
@@ -414,6 +438,7 @@ final class MeetingRecordStore: ObservableObject {
                     MeetingRecord.Columns.summaryText.set(to: summaryText),
                     MeetingRecord.Columns.summaryFullText.set(to: fullText),
                     MeetingRecord.Columns.summaryResultJSON.set(to: resultJSON),
+                    MeetingRecord.Columns.summaryLastResponseJSON.set(to: responseJSON),
                     MeetingRecord.Columns.summaryShareURL.set(to: shareURL),
                     MeetingRecord.Columns.summaryErrorMessage.set(to: ""),
                 ])

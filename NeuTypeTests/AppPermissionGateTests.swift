@@ -70,6 +70,39 @@ final class AppPermissionGateTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testPermissionsViewKeepsAccessibilityInGrantFlowWhenAccessIsMissing() {
+        let manager = PermissionsManager()
+        manager.isAccessibilityPermissionGranted = false
+        manager.accessibilityPermissionState = .needsAuthorization
+
+        let items = PermissionsView.items(for: manager)
+        let accessibilityItem = try! XCTUnwrap(items.first(where: { $0.id == .accessibility }))
+
+        XCTAssertEqual(accessibilityItem.description, "Required for global keyboard shortcuts")
+        XCTAssertEqual(accessibilityItem.buttonTitle, "Grant Access")
+    }
+
+    func testAccessibilityStateIsGrantedWhenPermissionIsGranted() {
+        XCTAssertEqual(
+            AccessibilityPermissionState.resolve(
+                isGranted: true,
+                requiresRelaunch: true
+            ),
+            .granted
+        )
+    }
+
+    func testAccessibilityStateRequiresAuthorizationBeforeRelaunchIsNeeded() {
+        XCTAssertEqual(
+            AccessibilityPermissionState.resolve(
+                isGranted: false,
+                requiresRelaunch: false
+            ),
+            .needsAuthorization
+        )
+    }
+
     func testScreenRecordingStateIsGrantedWhenPermissionIsGranted() {
         XCTAssertEqual(
             ScreenRecordingPermissionState.resolve(

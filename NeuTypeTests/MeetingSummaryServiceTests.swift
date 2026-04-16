@@ -22,7 +22,8 @@ final class MeetingSummaryServiceTests: XCTestCase {
                 taskID: "task-456",
                 status: .queued,
                 pollURL: "/api/integrations/neutype/meetings/job-123",
-                externalMeetingID: meeting.id.uuidString
+                externalMeetingID: meeting.id.uuidString,
+                rawResponseJSON: #"{"job_id":"job-123","task_id":"task-456","status":"queued","poll_url":"/api/integrations/neutype/meetings/job-123"}"#
             ),
             pollResponses: [
                 .processing(jobID: "job-123", externalMeetingID: meeting.id.uuidString),
@@ -50,6 +51,12 @@ final class MeetingSummaryServiceTests: XCTestCase {
         XCTAssertEqual(saved?.summaryFullText, "# 会议纪要")
         XCTAssertEqual(saved?.summaryShareURL, "https://ai-worker.neuxnet.com/share/job-123")
         XCTAssertEqual(saved?.decodedSummaryResult?.summary, "总结内容")
+        XCTAssertEqual(
+            saved?.summaryLastResponseJSON,
+            """
+            {"job_id":"job-123","external_meeting_id":"\(meeting.id.uuidString)","task_id":"task-456","status":"completed","meeting_title":"客户周会","summary_text":"摘要内容","full_text":"# 会议纪要","share_url":"https://ai-worker.neuxnet.com/share/job-123","error_message":"","poll_url":"/api/integrations/neutype/meetings/job-123"}
+            """
+        )
     }
 
     func testResumeMeetingPollsExistingJobWithoutResubmitting() async throws {
@@ -77,7 +84,8 @@ final class MeetingSummaryServiceTests: XCTestCase {
                 taskID: "unused",
                 status: .queued,
                 pollURL: "/api/integrations/neutype/meetings/unused",
-                externalMeetingID: meeting.id.uuidString
+                externalMeetingID: meeting.id.uuidString,
+                rawResponseJSON: #"{"job_id":"unused","task_id":"unused","status":"queued","poll_url":"/api/integrations/neutype/meetings/unused"}"#
             ),
             pollResponses: [
                 .completed(
@@ -99,6 +107,50 @@ final class MeetingSummaryServiceTests: XCTestCase {
         XCTAssertEqual(client.fetchedJobIDs, ["job-existing"])
         let saved = try await store.fetchMeeting(id: meeting.id)
         XCTAssertEqual(saved?.summaryStatus, .completed)
+    }
+
+    func testCompletedPollDoesNotFallbackSummaryTextIntoFullText() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = makeMeeting(transcriptPreview: "hello world", status: .completed)
+        try await store.insertMeeting(meeting, segments: [
+            makeSegment(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                startTime: 0,
+                endTime: 2,
+                text: "hello world"
+            )
+        ])
+
+        let client = StubMeetingSummaryClient(
+            createResponse: .init(
+                jobID: "job-empty-full",
+                taskID: "task-empty-full",
+                status: .queued,
+                pollURL: "/api/integrations/neutype/meetings/job-empty-full",
+                externalMeetingID: meeting.id.uuidString,
+                rawResponseJSON: #"{"job_id":"job-empty-full","task_id":"task-empty-full","status":"queued","poll_url":"/api/integrations/neutype/meetings/job-empty-full"}"#
+            ),
+            pollResponses: [
+                .completed(
+                    jobID: "job-empty-full",
+                    externalMeetingID: meeting.id.uuidString,
+                    taskID: "task-empty-full",
+                    summaryText: "兼容摘要",
+                    fullText: "",
+                    result: .fixture(),
+                    shareURL: "https://ai-worker.neuxnet.com/share/job-empty-full"
+                )
+            ]
+        )
+        let service = MeetingSummaryService(client: client, store: store, pollsInBackground: false)
+
+        try await service.submitMeeting(meetingID: meeting.id)
+
+        let saved = try await store.fetchMeeting(id: meeting.id)
+        XCTAssertEqual(saved?.summaryText, "兼容摘要")
+        XCTAssertEqual(saved?.summaryFullText, "")
     }
 
     func testResumeMeetingStartsOnlyOneBackgroundPollPerMeeting() async throws {
@@ -167,7 +219,8 @@ final class MeetingSummaryServiceTests: XCTestCase {
                 taskID: "task-retry",
                 status: .queued,
                 pollURL: "/api/integrations/neutype/meetings/job-retry",
-                externalMeetingID: "\(meeting.id.uuidString)-retry"
+                externalMeetingID: "\(meeting.id.uuidString)-retry",
+                rawResponseJSON: #"{"job_id":"job-retry","task_id":"task-retry","status":"queued","poll_url":"/api/integrations/neutype/meetings/job-retry"}"#
             ),
             pollResponses: [
                 .processing(jobID: "job-retry", externalMeetingID: "\(meeting.id.uuidString)-retry")
@@ -246,6 +299,52 @@ final class MeetingSummaryServiceTests: XCTestCase {
         XCTAssertEqual(response.fullText, "# 完整纪要\n\n- 要点")
         XCTAssertEqual(response.shareURL, "https://ai-worker.neuxnet.com/share/job-789")
     }
+
+    func testCreateResponseDebugSummaryContainsKeyInterfaceFields() {
+        let response = MeetingSummaryCreateResponse(
+            jobID: "job-123",
+            taskID: "task-456",
+            status: .queued,
+            pollURL: "/api/integrations/neutype/meetings/job-123",
+            externalMeetingID: "meeting-123",
+            rawResponseJSON: #"{"job_id":"job-123"}"#
+        )
+
+        let summary = response.debugSummary
+
+        XCTAssertTrue(summary.contains("jobID=job-123"))
+        XCTAssertTrue(summary.contains("taskID=task-456"))
+        XCTAssertTrue(summary.contains("status=queued"))
+        XCTAssertTrue(summary.contains("pollURL=/api/integrations/neutype/meetings/job-123"))
+        XCTAssertTrue(summary.contains("externalMeetingID=meeting-123"))
+    }
+
+    func testPollResponseDebugSummaryContainsKeyInterfaceFields() {
+        let response = MeetingSummaryPollResponse(
+            jobID: "job-789",
+            externalMeetingID: "meeting-789",
+            taskID: "task-789",
+            status: .completed,
+            meetingTitle: "客户周会",
+            summaryText: "摘要内容",
+            fullText: "# 完整纪要\n\n- 要点",
+            result: .fixture(),
+            shareURL: "https://ai-worker.neuxnet.com/share/job-789",
+            errorMessage: "",
+            pollURL: "/api/integrations/neutype/meetings/job-789",
+            rawResponseJSON: #"{"job_id":"job-789"}"#
+        )
+
+        let summary = response.debugSummary
+
+        XCTAssertTrue(summary.contains("jobID=job-789"))
+        XCTAssertTrue(summary.contains("status=completed"))
+        XCTAssertTrue(summary.contains("meetingTitle=客户周会"))
+        XCTAssertTrue(summary.contains("summaryTextLength=4"))
+        XCTAssertTrue(summary.contains("fullTextLength=12"))
+        XCTAssertTrue(summary.contains("shareURL=https://ai-worker.neuxnet.com/share/job-789"))
+        XCTAssertTrue(summary.contains("pollURL=/api/integrations/neutype/meetings/job-789"))
+    }
 }
 
 private final class StubMeetingSummaryClient: MeetingSummaryClientProtocol {
@@ -322,7 +421,8 @@ private extension MeetingSummaryPollResponse {
             result: nil,
             shareURL: "",
             errorMessage: "",
-            pollURL: "/api/integrations/neutype/meetings/\(jobID)"
+            pollURL: "/api/integrations/neutype/meetings/\(jobID)",
+            rawResponseJSON: #"{"job_id":"\#(jobID)","external_meeting_id":"\#(externalMeetingID)","task_id":"task-456","status":"processing","meeting_title":"Meeting","summary_text":"","full_text":"","share_url":"","error_message":"","poll_url":"/api/integrations/neutype/meetings/\#(jobID)"}"#
         )
     }
 
@@ -346,7 +446,10 @@ private extension MeetingSummaryPollResponse {
             result: result,
             shareURL: shareURL,
             errorMessage: "",
-            pollURL: "/api/integrations/neutype/meetings/\(jobID)"
+            pollURL: "/api/integrations/neutype/meetings/\(jobID)",
+            rawResponseJSON: """
+            {"job_id":"\(jobID)","external_meeting_id":"\(externalMeetingID)","task_id":"\(taskID)","status":"completed","meeting_title":"\(result.meetingTitle)","summary_text":"\(summaryText)","full_text":"\(fullText)","share_url":"\(shareURL)","error_message":"","poll_url":"/api/integrations/neutype/meetings/\(jobID)"}
+            """
         )
     }
 }

@@ -298,11 +298,40 @@ final class MeetingDetailViewModel: ObservableObject {
     }
 
     var summaryFullText: String {
-        guard let meeting else { return "" }
-        if !meeting.summaryFullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return meeting.summaryFullText
+        Self.normalizedSummaryFullText(meeting?.summaryFullText ?? "")
+    }
+
+    var summaryLastResponseJSON: String {
+        meeting?.summaryLastResponseJSON ?? ""
+    }
+
+    var prettyPrintedSummaryLastResponseJSON: String {
+        Self.prettyPrintedJSON(summaryLastResponseJSON)
+    }
+
+    var hasSummaryLastResponseJSON: Bool {
+        !summaryLastResponseJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var summaryLogDisplayText: String {
+        if hasSummaryLastResponseJSON {
+            return prettyPrintedSummaryLastResponseJSON
         }
-        return meeting.summaryText
+        return """
+        这条会议的总结生成于日志采集上线之前，当前本地没有保存原始接口 JSON。
+
+        如果你需要查看请求结果，请保留音频后重新生成一次总结。
+        """
+    }
+
+    var shouldShowSummaryLogButton: Bool {
+        guard let meeting else { return false }
+        switch meeting.summaryStatus {
+        case .received, .queued, .processing, .completed, .failed:
+            return true
+        case .unsubmitted:
+            return false
+        }
     }
 
     var shareURL: URL? {
@@ -319,6 +348,62 @@ final class MeetingDetailViewModel: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter.string(from: fallbackDate)
+    }
+
+    private static func normalizedSummaryFullText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let wrapperSignals = [
+            "I've completed the meeting notes. Here's the deliverable and summary:",
+            "Done. Here's the deliverable and summary:",
+            "Here are the results:",
+            "## 📄 Deliverable: Meeting Notes File",
+            "## 📄 Deliverable",
+            "## 1. Deliverable",
+            "The full Markdown file includes:",
+            "The full meeting notes Markdown file has been saved to:"
+        ]
+
+        let shouldStripWrapper = wrapperSignals.contains(where: trimmed.contains)
+        guard shouldStripWrapper else {
+            return trimmed
+        }
+
+        if let summaryRange = firstSummarySectionRange(in: trimmed) {
+            return String(trimmed[summaryRange.lowerBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return trimmed
+    }
+
+    private static func prettyPrintedJSON(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let prettyData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]),
+              let pretty = String(data: prettyData, encoding: .utf8) else {
+            return trimmed
+        }
+        return pretty
+    }
+
+    private static func firstSummarySectionRange(in text: String) -> Range<String.Index>? {
+        let pattern = #"(?m)^#{2,3}\s*(?:📋\s*)?(?:\d+\.\s*)?(?:Summary(?:\s+Message)?|Meeting Brief)\b"#
+
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = expression.firstMatch(in: text, options: [], range: nsRange),
+              let range = Range(match.range, in: text) else {
+            return nil
+        }
+
+        return range
     }
 
     private func resumeSummaryIfNeeded(for meeting: MeetingRecord) {

@@ -41,10 +41,25 @@ enum ScreenRecordingPermissionRequestAction: Equatable {
     }
 }
 
+enum AccessibilityPermissionState: Equatable {
+    case granted
+    case needsAuthorization
+    case needsRelaunch
+
+    static func resolve(isGranted: Bool, requiresRelaunch: Bool) -> Self {
+        if isGranted {
+            return .granted
+        }
+
+        return requiresRelaunch ? .needsRelaunch : .needsAuthorization
+    }
+}
+
 class PermissionsManager: ObservableObject {
     @Published var isMicrophonePermissionGranted = false
     @Published var isAccessibilityPermissionGranted = false
     @Published var isScreenRecordingPermissionGranted = false
+    @Published var accessibilityPermissionState: AccessibilityPermissionState = .needsAuthorization
     @Published var screenRecordingPermissionState: ScreenRecordingPermissionState = .needsAuthorization
 
     private var permissionCheckTimer: Timer?
@@ -136,7 +151,12 @@ class PermissionsManager: ObservableObject {
     func checkAccessibilityPermission() {
         let granted = AXIsProcessTrusted()
         DispatchQueue.main.async { [weak self] in
-            self?.isAccessibilityPermissionGranted = granted
+            guard let self else { return }
+            self.isAccessibilityPermissionGranted = granted
+            self.accessibilityPermissionState = AccessibilityPermissionState.resolve(
+                isGranted: granted,
+                requiresRelaunch: false
+            )
         }
     }
 
@@ -189,6 +209,21 @@ class PermissionsManager: ObservableObject {
         default:
             openSystemPreferences(for: .microphone)
         }
+    }
+
+    func requestAccessibilityPermissionOrOpenSystemPreferences() {
+        let granted = AXIsProcessTrusted()
+
+        if granted {
+            isAccessibilityPermissionGranted = true
+            accessibilityPermissionState = .granted
+            return
+        }
+
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        openSystemPreferences(for: .accessibility)
+        checkAccessibilityPermission()
     }
 
     func requestScreenRecordingPermissionOrOpenSystemPreferences() {

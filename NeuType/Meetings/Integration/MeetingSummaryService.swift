@@ -84,7 +84,8 @@ final class MeetingSummaryService: MeetingSummarizing {
             externalMeetingID: createResponse.externalMeetingID,
             jobID: createResponse.jobID,
             taskID: createResponse.taskID,
-            pollURL: createResponse.pollURL
+            pollURL: createResponse.pollURL,
+            responseJSON: createResponse.rawResponseJSON
         )
 
         if pollsInBackground {
@@ -166,14 +167,22 @@ final class MeetingSummaryService: MeetingSummarizing {
             let response = try await client.fetchMeeting(jobID: jobID)
             switch response.status {
             case .received, .queued, .processing:
-                try await store.updateSummaryStatus(meetingID: meetingID, status: response.status)
+                try await store.updateSummaryStatus(
+                    meetingID: meetingID,
+                    status: response.status,
+                    responseJSON: response.rawResponseJSON
+                )
             case .completed:
+                MeetingLog.info(
+                    "Meeting summary completed jobID=\(jobID) summaryTextLength=\(response.summaryText.count) fullTextLength=\(response.fullText.count)"
+                )
                 try await store.updateSummaryResult(
                     meetingID: meetingID,
                     summaryText: response.summaryText,
-                    fullText: response.fullText.isEmpty ? response.summaryText : response.fullText,
+                    fullText: response.fullText,
                     result: response.result ?? .empty(meetingTitle: response.meetingTitle),
-                    shareURL: response.shareURL
+                    shareURL: response.shareURL,
+                    responseJSON: response.rawResponseJSON
                 )
                 return
             case .failed:
@@ -181,7 +190,8 @@ final class MeetingSummaryService: MeetingSummarizing {
                 try await store.updateSummaryStatus(
                     meetingID: meetingID,
                     status: .failed,
-                    errorMessage: message
+                    errorMessage: message,
+                    responseJSON: response.rawResponseJSON
                 )
                 throw MeetingSummaryClientError.requestFailed(statusCode: 0, body: message)
             case .unsubmitted:

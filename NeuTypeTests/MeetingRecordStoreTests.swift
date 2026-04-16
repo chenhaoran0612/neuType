@@ -95,13 +95,17 @@ final class MeetingRecordStoreTests: XCTestCase {
         let meeting = makeMeeting(transcriptPreview: "hello world", status: .completed)
         try await store.insertMeeting(meeting, segments: [])
 
+        let responseJSON = """
+        {"job_id":"job-123","task_id":"task-456","status":"queued","poll_url":"/api/integrations/neutype/meetings/job-123"}
+        """
         try await store.updateSummarySubmission(
             meetingID: meeting.id,
             status: .queued,
             externalMeetingID: "meeting-\(meeting.id.uuidString)",
             jobID: "job-123",
             taskID: "task-456",
-            pollURL: "/api/integrations/neutype/meetings/job-123"
+            pollURL: "/api/integrations/neutype/meetings/job-123",
+            responseJSON: responseJSON
         )
 
         let saved = try await store.fetchMeeting(id: meeting.id)
@@ -110,6 +114,7 @@ final class MeetingRecordStoreTests: XCTestCase {
         XCTAssertEqual(saved?.summaryJobID, "job-123")
         XCTAssertEqual(saved?.summaryTaskID, "task-456")
         XCTAssertEqual(saved?.summaryPollURL, "/api/integrations/neutype/meetings/job-123")
+        XCTAssertEqual(saved?.summaryLastResponseJSON, responseJSON)
     }
 
     func testUpdateSummaryResultPersistsCompletedPayload() async throws {
@@ -128,13 +133,17 @@ final class MeetingRecordStoreTests: XCTestCase {
             risks: ["风险 1"],
             shareSummary: "一句话摘要"
         )
+        let responseJSON = """
+        {"job_id":"job-123","task_id":"task-456","status":"completed","summary_text":"摘要内容","full_text":"# 会议纪要","share_url":"https://ai-worker.neuxnet.com/share/abc"}
+        """
 
         try await store.updateSummaryResult(
             meetingID: meeting.id,
             summaryText: "摘要内容",
             fullText: "# 会议纪要",
             result: result,
-            shareURL: "https://ai-worker.neuxnet.com/share/abc"
+            shareURL: "https://ai-worker.neuxnet.com/share/abc",
+            responseJSON: responseJSON
         )
 
         let saved = try await store.fetchMeeting(id: meeting.id)
@@ -142,6 +151,7 @@ final class MeetingRecordStoreTests: XCTestCase {
         XCTAssertEqual(saved?.summaryText, "摘要内容")
         XCTAssertEqual(saved?.summaryFullText, "# 会议纪要")
         XCTAssertEqual(saved?.summaryShareURL, "https://ai-worker.neuxnet.com/share/abc")
+        XCTAssertEqual(saved?.summaryLastResponseJSON, responseJSON)
         XCTAssertEqual(saved?.decodedSummaryResult, result)
     }
 

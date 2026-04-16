@@ -90,8 +90,13 @@ struct MeetingDetailView: View {
                     }
                     .buttonStyle(.plain)
 
-                    if viewModel.activeTab == .summary, let shareURL = viewModel.shareURL {
-                        MeetingShareActionButtons(shareURL: shareURL)
+                    if viewModel.activeTab == .summary,
+                       (viewModel.shareURL != nil || viewModel.shouldShowSummaryLogButton) {
+                        MeetingSummaryHeaderActions(
+                            shareURL: viewModel.shareURL,
+                            logText: viewModel.summaryLogDisplayText,
+                            showsLogButton: viewModel.shouldShowSummaryLogButton
+                        )
                             .padding(.leading, 6)
                     }
                 }
@@ -242,41 +247,14 @@ private struct MeetingSummaryPane: View {
                     summaryCard {
                         MarkdownTextView(markdown: viewModel.summaryFullText)
                     }
-                } else if let result = viewModel.summaryResult {
-                    if !result.keyPoints.isEmpty {
-                        summarySection(title: "要点") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(result.keyPoints, id: \.self) { point in
-                                    bulletRow(point)
-                                }
-                            }
-                        }
-                    }
-
-                    if !result.actionItems.isEmpty {
-                        summarySection(title: "行动项") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(Array(result.actionItems.enumerated()), id: \.offset) { _, item in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.task)
-                                            .font(.system(size: 13, weight: .semibold))
-                                        Text("负责人：\(item.owner)\(item.dueAt.map { " · 截止：\($0)" } ?? "")")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !result.risks.isEmpty {
-                        summarySection(title: "风险") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(result.risks, id: \.self) { risk in
-                                    bulletRow(risk)
-                                }
-                            }
-                        }
+                } else {
+                    summaryStatusPanel(
+                        title: "还没有可展示的总结",
+                        message: "当前会议的 full_text 为空，请重新生成总结。",
+                        showsProgress: false,
+                        buttonTitle: "重新处理"
+                    ) {
+                        Task { await viewModel.processSummary() }
                     }
                 }
             }
@@ -394,6 +372,35 @@ private struct MeetingSummaryPane: View {
     }
 }
 
+private struct MeetingSummaryHeaderActions: View {
+    let shareURL: URL?
+    let logText: String
+    let showsLogButton: Bool
+
+    @State private var isShowingSummaryLog = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let shareURL {
+                MeetingShareActionButtons(shareURL: shareURL)
+            }
+
+            if showsLogButton {
+                Button {
+                    isShowingSummaryLog = true
+                } label: {
+                    Label("日志", systemImage: "doc.text.magnifyingglass")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .sheet(isPresented: $isShowingSummaryLog) {
+            MeetingSummaryLogSheet(logText: logText)
+        }
+    }
+}
+
 private struct MeetingShareActionButtons: View {
     let shareURL: URL
     @State private var didCopyShareLink = false
@@ -422,6 +429,62 @@ private struct MeetingShareActionButtons: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
+    }
+}
+
+private struct MeetingSummaryLogSheet: View {
+    let logText: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopyLog = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("最新接口返回")
+                    .font(.system(size: 16, weight: .semibold))
+
+                Spacer()
+
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(logText, forType: .string)
+                    didCopyLog = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1.5))
+                        didCopyLog = false
+                    }
+                } label: {
+                    Label(didCopyLog ? "已复制" : "复制", systemImage: didCopyLog ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("关闭") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            ScrollView {
+                Text(logText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(14)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .padding(20)
+        .frame(minWidth: 680, minHeight: 520)
     }
 }
 
@@ -822,6 +885,14 @@ private struct MeetingPlaybackBar: View {
             Text(formatDuration(playbackCoordinator.duration))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+
+            Button {
+                exportOriginalAudio()
+            } label: {
+                Label("下载原始音频", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -834,6 +905,38 @@ private struct MeetingPlaybackBar: View {
                 .stroke(Color.black.opacity(0.08), lineWidth: 1)
         )
         .frame(maxWidth: layout.playerBarMaxWidth, alignment: .leading)
+    }
+
+    private func exportOriginalAudio() {
+        let sourceURL = playbackCoordinator.audioURL
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            MeetingLog.error("Export original audio failed: source file missing at \(sourceURL.path)")
+            return
+        }
+
+        let suggestedName: String
+        if let audioFileName = viewModel.meeting?.audioFileName,
+           !audioFileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            suggestedName = audioFileName
+        } else {
+            suggestedName = sourceURL.lastPathComponent
+        }
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = suggestedName
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            MeetingLog.info("Exported original audio to \(destinationURL.path)")
+        } catch {
+            MeetingLog.error("Export original audio failed: \(error.localizedDescription)")
+        }
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {

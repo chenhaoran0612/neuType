@@ -243,9 +243,9 @@ private struct GeneralSettingsTabView: View {
                             statusText: nil,
                             grantedText: "已授权，可用于全局快捷键和系统级输入。",
                             deniedText: "未授权，全局快捷键和部分系统级输入会失效。",
-                            buttonTitle: "打开设置"
+                            buttonTitle: permissionsManager.isAccessibilityPermissionGranted ? "打开设置" : "请求授权"
                         ) {
-                            permissionsManager.openSystemPreferences(for: .accessibility)
+                            permissionsManager.requestAccessibilityPermissionOrOpenSystemPreferences()
                         }
 
                         Divider()

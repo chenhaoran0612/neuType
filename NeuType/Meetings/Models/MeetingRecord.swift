@@ -69,6 +69,7 @@ struct MeetingRecord: Identifiable, Codable, FetchableRecord, PersistableRecord,
     var summaryText: String = ""
     var summaryFullText: String = ""
     var summaryResultJSON: String = ""
+    var summaryLastResponseJSON: String = ""
     var summaryShareURL: String = ""
     var summaryErrorMessage: String = ""
 
@@ -91,6 +92,7 @@ struct MeetingRecord: Identifiable, Codable, FetchableRecord, PersistableRecord,
         static let summaryText = Column(CodingKeys.summaryText)
         static let summaryFullText = Column(CodingKeys.summaryFullText)
         static let summaryResultJSON = Column(CodingKeys.summaryResultJSON)
+        static let summaryLastResponseJSON = Column(CodingKeys.summaryLastResponseJSON)
         static let summaryShareURL = Column(CodingKeys.summaryShareURL)
         static let summaryErrorMessage = Column(CodingKeys.summaryErrorMessage)
     }
