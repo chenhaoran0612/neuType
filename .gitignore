@@ -122,3 +122,4 @@ default.profraw
 .cursorrules
 OpenSuperWhisper.dmg.sha256
 dev_config.json
+.worktrees/
