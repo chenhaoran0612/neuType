@@ -6,7 +6,7 @@ struct MeetingRecorderView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Meeting Recorder")
+            Text("会议录制")
                 .font(.title2.weight(.semibold))
 
             Text(statusText)
@@ -20,7 +20,7 @@ struct MeetingRecorderView: View {
                     .buttonStyle(.bordered)
 
                     if blockedPermission == .screenRecording {
-                        Button("Relaunch NeuType") {
+                        Button("重新打开 NeuType") {
                             viewModel.relaunchApplication()
                         }
                         .buttonStyle(.borderedProminent)
@@ -29,13 +29,13 @@ struct MeetingRecorderView: View {
             }
 
             HStack(spacing: 12) {
-                Button("Start") {
+                Button("开始") {
                     Task { await viewModel.startRecording() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isStartDisabled)
 
-                Button("Stop") {
+                Button("停止") {
                     meetingSession.requestStopConfirmation()
                 }
                 .buttonStyle(.bordered)
@@ -49,17 +49,17 @@ struct MeetingRecorderView: View {
     private var statusText: String {
         switch viewModel.state {
         case .idle:
-            return "Ready to record microphone and system audio."
+            return "准备录制麦克风和系统音频。"
         case .permissionBlocked(.microphone):
-            return "Microphone permission is required."
+            return "需要先授予麦克风权限。"
         case .permissionBlocked(.screenRecording):
-            return "Screen recording permission is required for system audio capture. After granting access in System Settings, relaunch NeuType."
+            return "采集系统音频需要屏幕录制权限。请在系统设置授权后重新打开 NeuType。"
         case .recording:
-            return "Recording in progress."
+            return "正在录制会议。"
         case .processing:
-            return "Processing meeting audio."
+            return "正在处理会议音频。"
         case .completed:
-            return "Meeting complete."
+            return "会议录制完成。"
         case .failed(let message):
             return message
         }
@@ -86,9 +86,9 @@ struct MeetingRecorderView: View {
     private func buttonTitle(for permission: MeetingPermissionKind) -> String {
         switch permission {
         case .microphone:
-            return "Grant Microphone Access"
+            return "授予麦克风权限"
         case .screenRecording:
-            return "Grant Screen Recording Access"
+            return "授予屏幕录制权限"
         }
     }
 }

@@ -64,14 +64,28 @@ struct MeetingRootView: View {
 
                         Spacer(minLength: 12)
 
-                        Button {
-                            importAudio()
-                        } label: {
-                            Label("导入音频", systemImage: "square.and.arrow.down")
-                                .font(.system(size: layout.sidebarSectionTitleFontSize, weight: .semibold))
+                        HStack(spacing: 8) {
+                            Button {
+                                Task {
+                                    await meetingSession.startRecordingFromMeetingPage()
+                                }
+                            } label: {
+                                Label(startRecordingButtonTitle, systemImage: startRecordingButtonIcon)
+                                    .font(.system(size: layout.sidebarSectionTitleFontSize, weight: .semibold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(isStartRecordingDisabled)
+
+                            Button {
+                                importAudio()
+                            } label: {
+                                Label("导入音频", systemImage: "square.and.arrow.down")
+                                    .font(.system(size: layout.sidebarSectionTitleFontSize, weight: .semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                         .padding(.top, 2)
                     }
                 }
@@ -110,15 +124,57 @@ struct MeetingRootView: View {
                 MeetingDetailView(meeting: meeting, layout: layout)
                     .id(meeting.id)
             } else {
-                ContentUnavailableView(
-                    "Meeting History",
-                    systemImage: "person.2.wave.2",
-                    description: Text("Use `\(meetingShortcutDescription)` to start meeting recording directly in the floating overlay.")
-                )
+                VStack(spacing: 22) {
+                    MeetingRecorderView(viewModel: meetingSession.recorderViewModel)
+                        .frame(maxWidth: 420, minHeight: 220)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        }
+                        .shadow(color: Color.black.opacity(0.04), radius: 18, y: 10)
+
+                    Text("也可以使用 `\(meetingShortcutDescription)` 直接开始会议录制。")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.white)
+    }
+
+    private var isStartRecordingDisabled: Bool {
+        switch meetingSession.recorderViewModel.state {
+        case .recording, .processing:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var startRecordingButtonTitle: String {
+        switch meetingSession.recorderViewModel.state {
+        case .recording:
+            return "录制中"
+        case .processing:
+            return "处理中"
+        default:
+            return "开始会议"
+        }
+    }
+
+    private var startRecordingButtonIcon: String {
+        switch meetingSession.recorderViewModel.state {
+        case .recording:
+            return "record.circle.fill"
+        case .processing:
+            return "hourglass"
+        default:
+            return "video.circle.fill"
+        }
     }
 
     private func syncSelection() {

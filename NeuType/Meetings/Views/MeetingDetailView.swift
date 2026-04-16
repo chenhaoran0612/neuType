@@ -238,7 +238,11 @@ private struct MeetingSummaryPane: View {
     private var completedSummaryView: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
-                if let result = viewModel.summaryResult {
+                if !viewModel.summaryFullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    summaryCard {
+                        MarkdownTextView(markdown: viewModel.summaryFullText)
+                    }
+                } else if let result = viewModel.summaryResult {
                     if !result.keyPoints.isEmpty {
                         summarySection(title: "要点") {
                             VStack(alignment: .leading, spacing: 8) {
@@ -273,12 +277,6 @@ private struct MeetingSummaryPane: View {
                                 }
                             }
                         }
-                    }
-                }
-
-                if !viewModel.summaryFullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    summaryCard {
-                        MarkdownTextView(markdown: viewModel.summaryFullText)
                     }
                 }
             }

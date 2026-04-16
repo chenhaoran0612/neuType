@@ -176,6 +176,18 @@ final class MeetingSessionController: ObservableObject {
         await recorderViewModel.startRecording()
     }
 
+    func startRecordingFromMeetingPage() async {
+        MeetingLog.info("Start meeting recording from history page")
+        let wasPresented = isPresented
+        await recorderViewModel.startRecording()
+
+        guard wasPresented else { return }
+        guard case .recording = recorderViewModel.state else { return }
+        guard overlayState == .recordingBar, !isPresented else { return }
+
+        handleMeetingPageDismissed()
+    }
+
     func requestStopConfirmation() {
         requestStopConfirmation(reason: .manual)
     }
@@ -265,7 +277,6 @@ final class MeetingSessionController: ObservableObject {
     private func observeRecorderState() {
         recorderViewModel.$state
             .dropFirst()
-            .receive(on: RunLoop.main)
             .sink { [weak self] state in
                 self?.handleRecorderStateDidChange(state)
             }
@@ -274,7 +285,6 @@ final class MeetingSessionController: ObservableObject {
         recorderViewModel.$hasReachedRecordingLimit
             .removeDuplicates()
             .filter { $0 }
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.requestStopConfirmation(reason: .timeLimitReached)
             }
