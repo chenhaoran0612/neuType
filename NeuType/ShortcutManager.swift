@@ -8,16 +8,38 @@ import SwiftUI
 
 extension KeyboardShortcuts.Name {
     static let toggleRecord = Self("toggleRecord", default: .init(.backtick, modifiers: .option))
+    static let toggleMeetingRecord = Self("toggleMeetingRecord", default: .init(.m, modifiers: [.option, .shift]))
     static let escape = Self("escape", default: .init(.escape))
+}
+
+struct MeetingShortcutValidator {
+    let dictationShortcut: KeyboardShortcuts.Shortcut?
+
+    func canUse(_ shortcut: KeyboardShortcuts.Shortcut?) -> Bool {
+        guard let shortcut else { return true }
+        guard let dictationShortcut else { return true }
+        return shortcut != dictationShortcut
+    }
 }
 
 class ShortcutManager {
     static let shared = ShortcutManager()
 
+    enum HotkeyAction: Equatable {
+        case none
+        case startRecording
+        case stopRecording
+
+        static func resolveOnKeyDown(hasActiveIndicator: Bool) -> Self {
+            hasActiveIndicator ? .none : .startRecording
+        }
+
+        static func resolveOnKeyUp(hasActiveIndicator: Bool) -> Self {
+            hasActiveIndicator ? .stopRecording : .none
+        }
+    }
+
     private var activeVm: IndicatorViewModel?
-    private var holdWorkItem: DispatchWorkItem?
-    private let holdThreshold: TimeInterval = 0.3
-    private var holdMode = false
 
     private init() {
         RequestLogStore.log(.usage, "ShortcutManager initialized")
@@ -43,7 +65,6 @@ class ShortcutManager {
     @objc private func indicatorWindowDidHide() {
         RequestLogStore.log(.usage, "Indicator hidden")
         activeVm = nil
-        holdMode = false
     }
     
     @objc private func hotkeySettingsChanged() {
@@ -70,6 +91,14 @@ class ShortcutManager {
             }
         }
         KeyboardShortcuts.disable(.escape)
+
+        KeyboardShortcuts.onKeyDown(for: .toggleMeetingRecord) {
+            Task { @MainActor in
+                let shortcutDescription = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)?.description ?? "unconfigured"
+                RequestLogStore.log(.usage, "Meeting shortcut keyDown: \(shortcutDescription)")
+                NotificationCenter.default.post(name: .toggleMeetingMinutesShortcut, object: nil)
+            }
+        }
     }
     
     private func setupModifierKeyMonitor() {
@@ -91,14 +120,16 @@ class ShortcutManager {
     }
     
     private func handleKeyDown() {
-        holdWorkItem?.cancel()
-        holdMode = false
-        RequestLogStore.log(.usage, "Hotkey keyDown")
-        
-        let holdToRecordEnabled = AppPreferences.shared.holdToRecord
-        
+        let mainWindow = NSApplication.shared.windows.first
+        let frontmostApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"
+        RequestLogStore.log(
+            .usage,
+            "Hotkey keyDown frontmostApp=\(frontmostApp) appActive=\(NSApp.isActive) mainWindowVisible=\(mainWindow?.isVisible ?? false) mainWindowMiniaturized=\(mainWindow?.isMiniaturized ?? false) activeIndicator=\(activeVm != nil)"
+        )
+
         Task { @MainActor in
-            if self.activeVm == nil {
+            switch HotkeyAction.resolveOnKeyDown(hasActiveIndicator: self.activeVm != nil) {
+            case .startRecording:
                 let cursorPosition = FocusUtils.getCurrentCursorPosition()
                 let indicatorPoint: NSPoint?
                 if let caret = FocusUtils.getCaretRect() {
@@ -109,36 +140,28 @@ class ShortcutManager {
                 let vm = IndicatorWindowManager.shared.show(nearPoint: indicatorPoint)
                 vm.startRecording()
                 self.activeVm = vm
-                RequestLogStore.log(.usage, "Recording started")
-            } else if !self.holdMode {
+                RequestLogStore.log(.usage, "Recording started indicatorCreated=true")
+            case .stopRecording:
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
                 RequestLogStore.log(.usage, "Recording stopped by keyDown")
+            case .none:
+                break
             }
-        }
-        
-        if holdToRecordEnabled {
-            let workItem = DispatchWorkItem { [weak self] in
-                self?.holdMode = true
-            }
-            holdWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + holdThreshold, execute: workItem)
         }
     }
     
     private func handleKeyUp() {
-        holdWorkItem?.cancel()
-        holdWorkItem = nil
         RequestLogStore.log(.usage, "Hotkey keyUp")
-        
-        let holdToRecordEnabled = AppPreferences.shared.holdToRecord
-        
+
         Task { @MainActor in
-            if holdToRecordEnabled && self.holdMode {
+            switch HotkeyAction.resolveOnKeyUp(hasActiveIndicator: self.activeVm != nil) {
+            case .stopRecording:
                 IndicatorWindowManager.shared.stopRecording()
                 self.activeVm = nil
-                self.holdMode = false
                 RequestLogStore.log(.usage, "Recording stopped on hold release")
+            case .startRecording, .none:
+                break
             }
         }
     }

@@ -5,6 +5,22 @@ if [[ "$1" == "build" ]]; then
     JUST_BUILD=true
 fi
 
+NO_CODESIGN=false
+if [[ "$NO_CODESIGN" == "1" ]]; then
+    NO_CODESIGN=true
+fi
+
+APP_BUNDLE_ID="ai.neuxnet.neutype.test"
+APP_DEBUG_APP="./build/Build/Products/Debug/NeuType-Test.app"
+APP_DEBUG_BINARY="${APP_DEBUG_APP}/Contents/MacOS/NeuType-Test"
+
+reset_app_permissions() {
+    local services=("Microphone" "Accessibility" "ScreenCapture" "AppleEvents")
+    for service in "${services[@]}"; do
+        tccutil reset "${service}" "${APP_BUNDLE_ID}" 2>/dev/null || true
+    done
+}
+
 # Configure libwhisper
 echo "Configuring libwhisper..."
 cmake -G Xcode -B libwhisper/build -S libwhisper
@@ -24,16 +40,15 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-echo "Copying libomp.dylib..."
-rm -f ./build/libomp.dylib
-cp /opt/homebrew/opt/libomp/lib/libomp.dylib ./build/libomp.dylib
-chmod u+w ./build/libomp.dylib
-install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
-codesign --force --sign - ./build/libomp.dylib
-
 # Build the app
 echo "Building NeuType..."
-BUILD_OUTPUT=$(xcodebuild -scheme NeuType -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'generic/platform=macOS' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO OTHER_CODE_SIGN_FLAGS="--entitlements NeuType/NeuType.entitlements" build 2>&1)
+if $NO_CODESIGN; then
+    echo "Using unsigned Debug build (NO_CODESIGN=1)..."
+    BUILD_OUTPUT=$(xcodebuild -scheme NeuType -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'generic/platform=macOS' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO OTHER_CODE_SIGN_FLAGS="--entitlements NeuType/NeuType.entitlements" build 2>&1)
+else
+    echo "Using project code signing settings for Debug build..."
+    BUILD_OUTPUT=$(xcodebuild -scheme NeuType -configuration Debug -jobs 8 -derivedDataPath build -quiet -destination 'generic/platform=macOS' -skipPackagePluginValidation -skipMacroValidation -UseModernBuildSystem=YES -clonedSourcePackagesDirPath SourcePackages -skipUnavailableActions build 2>&1)
+fi
 
 # sudo gem install xcpretty
 if command -v xcpretty &> /dev/null
@@ -49,11 +64,14 @@ if [[ $? -eq 0 ]] && [[ ! "$BUILD_OUTPUT" =~ "BUILD FAILED" ]]; then
     if $JUST_BUILD; then
         exit 0
     fi
+    echo "Resetting macOS permissions for ${APP_BUNDLE_ID}..."
+    pkill -x "NeuType-Test" 2>/dev/null || true
+    reset_app_permissions
     echo "Starting the app..."
     # Remove quarantine attribute if exists
-    xattr -d com.apple.quarantine ./build/Build/Products/Debug/NeuType.app 2>/dev/null || true
+    xattr -d com.apple.quarantine "${APP_DEBUG_APP}" 2>/dev/null || true
     # Run the app and show logs
-    ./build/Build/Products/Debug/NeuType.app/Contents/MacOS/NeuType
+    "${APP_DEBUG_BINARY}"
 else
     echo "Build failed!"
     exit 1

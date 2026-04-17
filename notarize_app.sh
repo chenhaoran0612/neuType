@@ -20,6 +20,14 @@ cmake -G Xcode -B libwhisper/build -S libwhisper
 rm -rf build
 mkdir -p build
 
+if [[ -d "SourcePackages/checkouts" ]]; then
+  while IFS= read -r gitmodules_path; do
+    package_dir="$(dirname "${gitmodules_path}")"
+    echo "Updating package submodules in ${package_dir}..."
+    git -C "${package_dir}" submodule update --init --recursive
+  done < <(find "SourcePackages/checkouts" -name .gitmodules -print)
+fi
+
 echo "Building autocorrect-swift..."
 cargo build -p autocorrect-swift --release --target aarch64-apple-darwin --manifest-path=asian-autocorrect/Cargo.toml
 cp ./asian-autocorrect/target/aarch64-apple-darwin/release/libautocorrect_swift.dylib ./build/libautocorrect_swift.dylib
@@ -27,16 +35,23 @@ chmod +w ./build/libautocorrect_swift.dylib
 install_name_tool -id "@rpath/libautocorrect_swift.dylib" ./build/libautocorrect_swift.dylib
 codesign --force --sign "${CODE_SIGN_IDENTITY}" --timestamp ./build/libautocorrect_swift.dylib
 
-echo "Copying libomp.dylib..."
-cp /opt/homebrew/opt/libomp/lib/libomp.dylib ./build/libomp.dylib
-chmod +w ./build/libomp.dylib
-install_name_tool -id "@rpath/libomp.dylib" ./build/libomp.dylib
-codesign --force --sign "${CODE_SIGN_IDENTITY}" --timestamp ./build/libomp.dylib
+echo "Resolving Swift package dependencies..."
+xcodebuild \
+  -resolvePackageDependencies \
+  -scheme "NeuType" \
+  -clonedSourcePackagesDirPath SourcePackages \
+  -skipPackagePluginValidation \
+  -skipMacroValidation
 
 xcodebuild \
   -scheme "NeuType" \
   -configuration Release \
   -destination "generic/platform=macOS" \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  -UseModernBuildSystem=YES \
+  -clonedSourcePackagesDirPath SourcePackages \
+  -skipUnavailableActions \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY}" \

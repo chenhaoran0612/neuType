@@ -82,6 +82,58 @@ enum ModifierKey: String, CaseIterable, Identifiable, Codable {
         case .fn: return .maskSecondaryFn
         }
     }
+
+    func matchesFlagsChangedEvent(keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        switch self {
+        case .none:
+            return false
+        case .fn:
+            return keyCode == self.keyCode || flags.contains(.maskSecondaryFn)
+        default:
+            return keyCode == self.keyCode
+        }
+    }
+
+    func shouldProcessFlagsChangedEvent(
+        keyCode: UInt16,
+        flags: CGEventFlags,
+        wasPressed: Bool
+    ) -> Bool {
+        switch self {
+        case .none:
+            return false
+        case .fn:
+            return wasPressed || keyCode == self.keyCode || flags.contains(.maskSecondaryFn)
+        default:
+            return matchesFlagsChangedEvent(keyCode: keyCode, flags: flags)
+        }
+    }
+
+    func matchesFlagsChangedEvent(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        switch self {
+        case .none:
+            return false
+        case .fn:
+            return keyCode == self.keyCode || flags.contains(.function)
+        default:
+            return keyCode == self.keyCode
+        }
+    }
+
+    func shouldProcessFlagsChangedEvent(
+        keyCode: UInt16,
+        flags: NSEvent.ModifierFlags,
+        wasPressed: Bool
+    ) -> Bool {
+        switch self {
+        case .none:
+            return false
+        case .fn:
+            return wasPressed || keyCode == self.keyCode || flags.contains(.function)
+        default:
+            return matchesFlagsChangedEvent(keyCode: keyCode, flags: flags)
+        }
+    }
     
     var isCommandOrOption: Bool {
         switch self {
@@ -98,6 +150,9 @@ class ModifierKeyMonitor {
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
+    private var fnReleasePollingTimer: Timer?
     private var selectedModifierKey: ModifierKey = .none
     private var isModifierPressed = false
     
@@ -119,8 +174,10 @@ class ModifierKeyMonitor {
         
         let eventMask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
         
+        let tapLocation: CGEventTapLocation = modifierKey == .fn ? .cghidEventTap : .cgSessionEventTap
+
         guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
+            tap: tapLocation,
             place: .headInsertEventTap,
             options: .listenOnly,
             eventsOfInterest: eventMask,
@@ -151,7 +208,16 @@ class ModifierKeyMonitor {
         if let source = runLoopSource {
             CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            print("ModifierKeyMonitor: Started monitoring for \(modifierKey.displayName)")
+            print("ModifierKeyMonitor: Started monitoring for \(modifierKey.displayName) via \(tapLocation == .cghidEventTap ? "HID" : "session") tap")
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.handleFlagsChanged(event: event)
+        }
+
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.handleFlagsChanged(event: event)
+            return event
         }
     }
     
@@ -164,6 +230,15 @@ class ModifierKeyMonitor {
         }
         eventTap = nil
         runLoopSource = nil
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
+        stopFnReleasePolling()
         isModifierPressed = false
         print("ModifierKeyMonitor: Stopped")
     }
@@ -179,21 +254,79 @@ class ModifierKeyMonitor {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
         
-        guard keyCode == selectedModifierKey.keyCode else { return }
+        guard selectedModifierKey.shouldProcessFlagsChangedEvent(
+            keyCode: keyCode,
+            flags: flags,
+            wasPressed: isModifierPressed
+        ) else { return }
         
         let cgFlag = selectedModifierKey.cgEventFlag
         let isPressed = flags.contains(cgFlag)
         
         if isPressed && !isModifierPressed {
             isModifierPressed = true
+            startFnReleasePollingIfNeeded()
             DispatchQueue.main.async {
+                RequestLogStore.log(.usage, "Modifier monitor keyDown via CGEvent: \(self.selectedModifierKey.displayName)")
                 self.onKeyDown?()
             }
         } else if !isPressed && isModifierPressed {
             isModifierPressed = false
+            stopFnReleasePolling()
             DispatchQueue.main.async {
+                RequestLogStore.log(.usage, "Modifier monitor keyUp via CGEvent: \(self.selectedModifierKey.displayName)")
                 self.onKeyUp?()
             }
+        }
+    }
+
+    private func handleFlagsChanged(event: NSEvent) {
+        let keyCode = event.keyCode
+        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control, .function])
+
+        guard selectedModifierKey.shouldProcessFlagsChangedEvent(
+            keyCode: keyCode,
+            flags: flags,
+            wasPressed: isModifierPressed
+        ) else { return }
+
+        let isPressed = flags.contains(selectedModifierKey.modifierFlag)
+
+        if isPressed && !isModifierPressed {
+            isModifierPressed = true
+            startFnReleasePollingIfNeeded()
+            RequestLogStore.log(.usage, "Modifier monitor keyDown via NSEvent: \(selectedModifierKey.displayName)")
+            onKeyDown?()
+        } else if !isPressed && isModifierPressed {
+            isModifierPressed = false
+            stopFnReleasePolling()
+            RequestLogStore.log(.usage, "Modifier monitor keyUp via NSEvent: \(selectedModifierKey.displayName)")
+            onKeyUp?()
+        }
+    }
+
+    private func startFnReleasePollingIfNeeded() {
+        guard selectedModifierKey == .fn else { return }
+
+        DispatchQueue.main.async {
+            self.fnReleasePollingTimer?.invalidate()
+            self.fnReleasePollingTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                let flags = CGEventSource.flagsState(.combinedSessionState)
+                guard self.isModifierPressed, !flags.contains(.maskSecondaryFn) else { return }
+
+                self.isModifierPressed = false
+                self.stopFnReleasePolling()
+                RequestLogStore.log(.usage, "Modifier monitor keyUp via polling: \(self.selectedModifierKey.displayName)")
+                self.onKeyUp?()
+            }
+        }
+    }
+
+    private func stopFnReleasePolling() {
+        DispatchQueue.main.async {
+            self.fnReleasePollingTimer?.invalidate()
+            self.fnReleasePollingTimer = nil
         }
     }
     

@@ -101,6 +101,45 @@ final class AppPreferences {
     @UserDefault(key: "llmModel", defaultValue: "openai/gpt-oss-20b")
     var llmModel: String
 
+    @UserDefault(key: "meetingVibeVoiceBaseURL", defaultValue: "https://tokenhubpro.com")
+    var meetingVibeVoiceBaseURL: String
+
+    @UserDefault(key: "meetingVibeVoiceAPIPrefix", defaultValue: "")
+    var meetingVibeVoiceAPIPrefix: String
+
+    @UserDefault(key: "meetingVibeVoiceAPIKey", defaultValue: "")
+    var meetingVibeVoiceAPIKey: String
+
+    @UserDefault(key: "meetingVibeVoiceContextInfo", defaultValue: "")
+    var meetingVibeVoiceContextInfo: String
+
+    @UserDefault(key: "meetingVibeVoiceMaxNewTokens", defaultValue: 8192)
+    var meetingVibeVoiceMaxNewTokens: Int
+
+    @UserDefault(key: "meetingVibeVoiceTemperature", defaultValue: 0.0)
+    var meetingVibeVoiceTemperature: Double
+
+    @UserDefault(key: "meetingVibeVoiceTopP", defaultValue: 1.0)
+    var meetingVibeVoiceTopP: Double
+
+    @UserDefault(key: "meetingVibeVoiceDoSample", defaultValue: false)
+    var meetingVibeVoiceDoSample: Bool
+
+    @UserDefault(key: "meetingVibeVoiceRepetitionPenalty", defaultValue: 1.0)
+    var meetingVibeVoiceRepetitionPenalty: Double
+
+    @UserDefault(key: "meetingSummaryBaseURL", defaultValue: "https://ai-worker.neuxnet.com")
+    var meetingSummaryBaseURL: String
+
+    @UserDefault(key: "meetingSummaryAPIKey", defaultValue: "")
+    var meetingSummaryAPIKey: String
+
+    @UserDefault(key: "didPromptForScreenRecordingPermission", defaultValue: false)
+    var didPromptForScreenRecordingPermission: Bool
+
+    @UserDefault(key: "screenRecordingPermissionPendingRelaunch", defaultValue: false)
+    var screenRecordingPermissionPendingRelaunch: Bool
+
     @OptionalUserDefault(key: "indicatorOriginX")
     var indicatorOriginX: Double?
 

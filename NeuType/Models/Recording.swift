@@ -274,7 +274,7 @@ class RecordingStore: ObservableObject {
     }
 
     nonisolated func updateSourceFileURL(_ id: UUID, sourceURL: String) async throws {
-        try await dbQueue.write { db in
+        _ = try await dbQueue.write { db in
             try Recording
                 .filter(Recording.Columns.id == id)
                 .updateAll(db, [

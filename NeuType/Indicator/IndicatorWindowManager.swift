@@ -16,6 +16,7 @@ class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate 
     
     func show(nearPoint point: NSPoint? = nil, allowDragging: Bool = false) -> IndicatorViewModel {
         isPositionEditing = allowDragging
+        RequestLogStore.log(.usage, "Indicator show requested allowDragging=\(allowDragging)")
         
         KeyboardShortcuts.enable(.escape)
         
@@ -40,7 +41,13 @@ class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate 
             panel.ignoresMouseEvents = !allowDragging
             panel.isMovableByWindowBackground = allowDragging
             panel.hidesOnDeactivate = false
+            panel.level = .statusBar
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+            panel.isReleasedWhenClosed = false
+            panel.animationBehavior = .utilityWindow
+            panel.becomesKeyOnlyIfNeeded = true
             panel.delegate = self
+            RequestLogStore.log(.usage, "Indicator panel created level=statusBar behavior=canJoinAllSpaces+fullScreenAuxiliary")
             
             self.window = panel
         } else {
@@ -64,13 +71,18 @@ class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate 
             let clampedY = max(screenFrame.minY, min(y, screenFrame.maxY - windowFrame.height))
             
             window.setFrameOrigin(NSPoint(x: clampedX, y: clampedY))
+            RequestLogStore.log(.usage, "Indicator frame origin=(\(Int(clampedX)), \(Int(clampedY))) screen=\(screen.localizedName)")
             
             // Set content view
             let hostingView = NSHostingView(rootView: IndicatorWindow(viewModel: newViewModel))
             window.contentView = hostingView
         }
         
-        window?.orderFront(nil)
+        RequestLogStore.log(.usage, "Indicator frontmost app before show=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil") activationPolicy=\(NSApp.activationPolicy().rawValue)")
+        window?.orderFrontRegardless()
+        if let window {
+            RequestLogStore.log(.usage, "Indicator visible=\(window.isVisible) key=\(window.isKeyWindow) main=\(window.isMainWindow) windowNumber=\(window.windowNumber)")
+        }
         return newViewModel
     }
 
@@ -91,6 +103,7 @@ class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate 
     }
 
     func hide() {
+        RequestLogStore.log(.usage, "Indicator hide requested")
         KeyboardShortcuts.disable(.escape)
         
         Task {
@@ -105,6 +118,7 @@ class IndicatorWindowManager: NSObject, IndicatorViewDelegate, NSWindowDelegate 
             self.window?.isMovableByWindowBackground = false
             self.isPositionEditing = false
             self.viewModel = nil
+            RequestLogStore.log(.usage, "Indicator hidden")
             
             NotificationCenter.default.post(name: .indicatorWindowDidHide, object: nil)
         }

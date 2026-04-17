@@ -11,9 +11,31 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
+@MainActor
+final class AppNavigationController: ObservableObject {
+    static let shared = AppNavigationController()
+
+    enum WorkspaceSelection {
+        case home
+        case voiceInput
+    }
+
+    @Published var selectedWorkspace: WorkspaceSelection = .home
+
+    func openVoiceInput() {
+        selectedWorkspace = .voiceInput
+    }
+
+    func returnHome() {
+        selectedWorkspace = .home
+    }
+}
+
 @main
 struct NeuTypeApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var meetingSession = MeetingSessionController()
+    @StateObject private var appNavigation = AppNavigationController.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -25,12 +47,14 @@ struct NeuTypeApp: App {
                     ContentView()
                 }
             }
-            .frame(width: 450)
-            .frame(minHeight: 400, maxHeight: 900)
+            .frame(minWidth: 620, idealWidth: 680)
+            .frame(minHeight: 720, idealHeight: 820, maxHeight: 980)
             .environmentObject(appState)
+            .environmentObject(meetingSession)
+            .environmentObject(appNavigation)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 450, height: 650)
+        .defaultSize(width: 680, height: 820)
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -79,11 +103,12 @@ class AppState: ObservableObject {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
-    private var languageSubmenu: NSMenu?
     private var microphoneService = MicrophoneService.shared
+    private let appNavigation = AppNavigationController.shared
     private var microphoneObserver: AnyCancellable?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -98,8 +123,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             self.mainWindow = window
             window.delegate = self
             
-            window.minSize = NSSize(width: 450, height: 400)
-            window.maxSize = NSSize(width: 450, height: 900)
+            window.minSize = NSSize(width: 620, height: 720)
+            window.maxSize = NSSize(width: 760, height: 980)
         }
         
         NeuTypeApp.startTranscriptionQueue()
@@ -176,34 +201,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     private func updateStatusBarMenu() {
+        statusItem?.menu = makeStatusBarMenu()
+    }
+
+    func makeStatusBarMenu() -> NSMenu {
         let menu = NSMenu()
-        
-        menu.addItem(NSMenuItem(title: "NeuType", action: #selector(openApp), keyEquivalent: "o"))
-        
-        let transcriptionLanguageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
-        languageSubmenu = NSMenu()
-        
-        // Add language options
-        for languageCode in LanguageUtil.availableLanguages {
-            let languageName = LanguageUtil.languageNames[languageCode] ?? languageCode
-            let languageItem = NSMenuItem(title: languageName, action: #selector(selectLanguage(_:)), keyEquivalent: "")
-            languageItem.target = self
-            languageItem.representedObject = languageCode
-            languageItem.state = (AppPreferences.shared.whisperLanguage == languageCode) ? .on : .off
-            languageSubmenu?.addItem(languageItem)
-        }
-        
-        transcriptionLanguageItem.submenu = languageSubmenu
-        menu.addItem(transcriptionLanguageItem)
-        
-        // Listen for language preference changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(languagePreferenceChanged),
-            name: .appPreferencesLanguageChanged,
-            object: nil
-        )
-        
+
+        let voiceInputItem = NSMenuItem(title: "打开语音输入", action: #selector(openVoiceInputFromMenu), keyEquivalent: "")
+        voiceInputItem.target = self
+        menu.addItem(voiceInputItem)
+
+        let meetingMinutesItem = NSMenuItem(title: "打开会议记录", action: #selector(openMeetingMinutesFromMenu), keyEquivalent: "")
+        meetingMinutesItem.target = self
+        menu.addItem(meetingMinutesItem)
+
         menu.addItem(NSMenuItem.separator())
         
         let microphoneMenu = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
@@ -261,9 +272,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         menu.addItem(microphoneMenu)
         
         menu.addItem(NSMenuItem.separator())
+
+        let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettingsFromMenu), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
-        
-        statusItem?.menu = menu
+
+        return menu
     }
     
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
@@ -276,43 +293,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         statusItem?.button?.performClick(nil)
     }
     
-    @objc private func openApp() {
+    @objc func openVoiceInputFromMenu() {
         showMainWindow()
+        NotificationCenter.default.post(name: .openVoiceInput, object: nil)
+    }
+
+    @objc func openMeetingMinutesFromMenu() {
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: .openMeetingMinutes, object: nil)
+    }
+
+    @objc func openSettingsFromMenu() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .openSettings, object: nil)
     }
     
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
-    }
-    
-    @objc private func selectLanguage(_ sender: NSMenuItem) {
-        guard let languageCode = sender.representedObject as? String else { return }
-        
-        // Update preferences
-        AppPreferences.shared.whisperLanguage = languageCode
-        
-        // Update menu item states
-        if let submenu = sender.menu {
-            for item in submenu.items {
-                item.state = .off
-            }
-            sender.state = .on
-        }
-    }
-    
-    @objc private func languagePreferenceChanged() {
-        updateLanguageMenuSelection()
-    }
-    
-    private func updateLanguageMenuSelection() {
-        guard let languageSubmenu = languageSubmenu else { return }
-        
-        let currentLanguage = AppPreferences.shared.whisperLanguage
-        
-        for item in languageSubmenu.items {
-            if let languageCode = item.representedObject as? String {
-                item.state = (languageCode == currentLanguage) ? .on : .off
-            }
-        }
     }
     
     func showMainWindow() {
@@ -329,14 +327,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             NSWorkspace.shared.open(url)
         }
     }
+
+    func hideMainWindow() {
+        mainWindow?.orderOut(nil)
+    }
 }
 
 extension AppDelegate: NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if appNavigation.selectedWorkspace == .voiceInput {
+            RequestLogStore.log(.usage, "Voice Input: returned home via window close")
+            appNavigation.returnHome()
+            return false
+        }
+
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-    }
-    
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        return NSSize(width: 450, height: frameSize.height)
     }
 }

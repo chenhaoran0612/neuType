@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Foundation
+import KeyboardShortcuts
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -41,10 +42,58 @@ class SettingsViewModel: ObservableObject {
         didSet { AppPreferences.shared.llmOptimizationPrompt = llmOptimizationPrompt }
     }
 
+    @Published var meetingVibeVoiceBaseURL: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceBaseURL = meetingVibeVoiceBaseURL }
+    }
+
+    @Published var meetingVibeVoiceAPIPrefix: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceAPIPrefix = meetingVibeVoiceAPIPrefix }
+    }
+
+    @Published var meetingVibeVoiceAPIKey: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceAPIKey = meetingVibeVoiceAPIKey }
+    }
+
+    @Published var meetingVibeVoiceContextInfo: String {
+        didSet { AppPreferences.shared.meetingVibeVoiceContextInfo = meetingVibeVoiceContextInfo }
+    }
+
+    @Published var meetingVibeVoiceMaxNewTokens: Double {
+        didSet { AppPreferences.shared.meetingVibeVoiceMaxNewTokens = Int(meetingVibeVoiceMaxNewTokens) }
+    }
+
+    @Published var meetingVibeVoiceTemperature: Double {
+        didSet { AppPreferences.shared.meetingVibeVoiceTemperature = meetingVibeVoiceTemperature }
+    }
+
+    @Published var meetingVibeVoiceTopP: Double {
+        didSet { AppPreferences.shared.meetingVibeVoiceTopP = meetingVibeVoiceTopP }
+    }
+
+    @Published var meetingVibeVoiceDoSample: Bool {
+        didSet { AppPreferences.shared.meetingVibeVoiceDoSample = meetingVibeVoiceDoSample }
+    }
+
+    @Published var meetingVibeVoiceRepetitionPenalty: Double {
+        didSet { AppPreferences.shared.meetingVibeVoiceRepetitionPenalty = meetingVibeVoiceRepetitionPenalty }
+    }
+
+    @Published var meetingSummaryBaseURL: String {
+        didSet { AppPreferences.shared.meetingSummaryBaseURL = meetingSummaryBaseURL }
+    }
+
+    @Published var meetingSummaryAPIKey: String {
+        didSet { AppPreferences.shared.meetingSummaryAPIKey = meetingSummaryAPIKey }
+    }
+
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
+<<<<<<< HEAD
     @Published var settingsTransferStatusMessage: String?
     @Published var settingsTransferStatusIsError = false
+=======
+    @Published var meetingShortcutError: String?
+>>>>>>> codex/meeting-minutes-vibevoice
 
     @MainActor
     var filteredLogs: [RequestLogEntry] {
@@ -54,6 +103,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     init() {
+        let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
         asrAPIKey = AppPreferences.shared.asrAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.asrAPIKey
@@ -62,6 +112,18 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        meetingVibeVoiceBaseURL = meetingConfig.baseURL
+        meetingVibeVoiceAPIPrefix = meetingConfig.apiPrefix
+        meetingVibeVoiceAPIKey = AppPreferences.shared.meetingVibeVoiceAPIKey
+        meetingVibeVoiceContextInfo = meetingConfig.contextInfo
+        meetingVibeVoiceMaxNewTokens = Double(meetingConfig.maxNewTokens)
+        meetingVibeVoiceTemperature = meetingConfig.temperature
+        meetingVibeVoiceTopP = meetingConfig.topP
+        meetingVibeVoiceDoSample = meetingConfig.doSample
+        meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
+        meetingSummaryBaseURL = AppPreferences.shared.meetingSummaryBaseURL
+        meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
+        validateMeetingShortcut()
     }
 
     func startIndicatorPositionAdjusting() {
@@ -75,6 +137,7 @@ class SettingsViewModel: ObservableObject {
         isAdjustingIndicatorPosition = false
     }
 
+<<<<<<< HEAD
     func reloadFromPreferences() {
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
@@ -134,6 +197,16 @@ class SettingsViewModel: ObservableObject {
     private func updateTransferStatus(message: String, isError: Bool) {
         settingsTransferStatusMessage = message
         settingsTransferStatusIsError = isError
+=======
+    func validateMeetingShortcut() {
+        let validator = MeetingShortcutValidator(
+            dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord)
+        )
+        let meetingShortcut = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)
+        meetingShortcutError = validator.canUse(meetingShortcut)
+            ? nil
+            : "Meeting shortcut cannot match the dictation shortcut."
+>>>>>>> codex/meeting-minutes-vibevoice
     }
 }
 
@@ -174,10 +247,14 @@ struct Settings {
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = SettingsViewModel()
+    @StateObject private var permissionsManager = PermissionsManager()
 
     var body: some View {
         TabView {
-            GeneralSettingsTabView(viewModel: viewModel)
+            GeneralSettingsTabView(
+                viewModel: viewModel,
+                permissionsManager: permissionsManager
+            )
                 .tabItem {
                     Label("General", systemImage: "gearshape")
                 }
@@ -227,10 +304,62 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTabView: View {
     @ObservedObject var viewModel: SettingsViewModel
+    @ObservedObject var permissionsManager: PermissionsManager
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        PermissionStatusRow(
+                            title: "麦克风",
+                            isGranted: permissionsManager.isMicrophonePermissionGranted,
+                            statusText: nil,
+                            grantedText: "已授权，可用于语音输入和会议录制。",
+                            deniedText: "未授权，语音输入和会议录制将不可用。",
+                            buttonTitle: permissionsManager.isMicrophonePermissionGranted ? "打开设置" : "请求授权"
+                        ) {
+                            permissionsManager.requestMicrophonePermissionOrOpenSystemPreferences()
+                        }
+
+                        Divider()
+
+                        PermissionStatusRow(
+                            title: "辅助功能",
+                            isGranted: permissionsManager.isAccessibilityPermissionGranted,
+                            statusText: nil,
+                            grantedText: "已授权，可用于全局快捷键和系统级输入。",
+                            deniedText: "未授权，全局快捷键和部分系统级输入会失效。",
+                            buttonTitle: permissionsManager.isAccessibilityPermissionGranted ? "打开设置" : "请求授权"
+                        ) {
+                            permissionsManager.requestAccessibilityPermissionOrOpenSystemPreferences()
+                        }
+
+                        Divider()
+
+                        PermissionStatusRow(
+                            title: "屏幕录制",
+                            isGranted: permissionsManager.isScreenRecordingPermissionGranted,
+                            statusText: screenRecordingStatusText,
+                            grantedText: "已授权，可用于会议记录中的系统音频采集。",
+                            deniedText: screenRecordingDeniedText,
+                            buttonTitle: screenRecordingButtonTitle
+                        ) {
+                            switch permissionsManager.screenRecordingPermissionState {
+                            case .granted:
+                                permissionsManager.openSystemPreferences(for: .screenRecording)
+                            case .needsAuthorization:
+                                permissionsManager.requestScreenRecordingPermissionOrOpenSystemPreferences()
+                            case .needsRelaunch:
+                                permissionsManager.relaunchApplication()
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("System Permissions", systemImage: "checkmark.shield")
+                }
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Press and hold this modifier key to trigger recording globally.")
@@ -257,6 +386,29 @@ private struct GeneralSettingsTabView: View {
                             Text("Drag the bubble and close Settings to save.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Meeting shortcut")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            KeyboardShortcuts.Recorder(for: .toggleMeetingRecord)
+                                .onChange(of: KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)) { _, _ in
+                                    viewModel.validateMeetingShortcut()
+                                }
+
+                            if let meetingShortcutError = viewModel.meetingShortcutError {
+                                Text(meetingShortcutError)
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            } else {
+                                Text("Used only for Meeting Minutes recording.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -305,8 +457,197 @@ private struct GeneralSettingsTabView: View {
                 } label: {
                     Label("LLM API (OpenAI Compatible)", systemImage: "brain.head.profile")
                 }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Meeting transcription uses the remote VibeVoice ASR OpenAI-compatible Chat Completions API. Base URL usually stays as https://tokenhubpro.com. You can also paste the full endpoint https://tokenhubpro.com/v1/chat/completions directly, and API Prefix is typically left empty.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        LabeledInputField(
+                            title: "Base URL",
+                            placeholder: "https://tokenhubpro.com",
+                            text: $viewModel.meetingVibeVoiceBaseURL
+                        )
+                        LabeledInputField(
+                            title: "API Prefix",
+                            placeholder: "(optional)",
+                            text: $viewModel.meetingVibeVoiceAPIPrefix
+                        )
+                        LabeledInputField(
+                            title: "API Key",
+                            placeholder: "VibeVoice service key",
+                            text: $viewModel.meetingVibeVoiceAPIKey
+                        )
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Context Info")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            TextEditor(text: $viewModel.meetingVibeVoiceContextInfo)
+                                .font(.system(size: 12))
+                                .frame(minHeight: 72)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                                )
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Max New Tokens")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $viewModel.meetingVibeVoiceMaxNewTokens, in: 512...16384, step: 256)
+                                Text("\(Int(viewModel.meetingVibeVoiceMaxNewTokens))")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                                Text("Recommended: 8192 for tokenhubpro.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Temperature")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $viewModel.meetingVibeVoiceTemperature, in: 0.0...2.0, step: 0.1)
+                                Text(String(format: "%.1f", viewModel.meetingVibeVoiceTemperature))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Top P")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $viewModel.meetingVibeVoiceTopP, in: 0.0...1.0, step: 0.05)
+                                Text(String(format: "%.2f", viewModel.meetingVibeVoiceTopP))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Repetition Penalty")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $viewModel.meetingVibeVoiceRepetitionPenalty, in: 1.0...1.2, step: 0.01)
+                                Text(String(format: "%.2f", viewModel.meetingVibeVoiceRepetitionPenalty))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Toggle("Enable sampling", isOn: $viewModel.meetingVibeVoiceDoSample)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("Meeting ASR (VibeVoice)", systemImage: "person.2.wave.2")
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Meeting summaries are submitted to ai-worker after transcript completion. The service endpoint is fixed to https://ai-worker.neuxnet.com; only the API key is required here.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        LabeledInputField(
+                            title: "API Key",
+                            placeholder: "ntm_xxx",
+                            text: $viewModel.meetingSummaryAPIKey
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("Meeting Summary Service", systemImage: "text.document.star")
+                }
             }
             .padding(16)
+        }
+    }
+
+    private var screenRecordingStatusText: String {
+        switch permissionsManager.screenRecordingPermissionState {
+        case .granted:
+            return "已授权"
+        case .needsAuthorization:
+            return "未授权"
+        case .needsRelaunch:
+            return "需重启"
+        }
+    }
+
+    private var screenRecordingDeniedText: String {
+        switch permissionsManager.screenRecordingPermissionState {
+        case .granted:
+            return "已授权，可用于会议记录中的系统音频采集。"
+        case .needsAuthorization:
+            return "未授权，会议记录无法采集系统音频。"
+        case .needsRelaunch:
+            return "已在系统设置中授权，重启 NeuType 后才能生效。"
+        }
+    }
+
+    private var screenRecordingButtonTitle: String {
+        switch permissionsManager.screenRecordingPermissionState {
+        case .granted:
+            return "打开设置"
+        case .needsAuthorization:
+            return "请求授权"
+        case .needsRelaunch:
+            return "重新启动"
+        }
+    }
+}
+
+private struct PermissionStatusRow: View {
+    let title: String
+    let isGranted: Bool
+    let statusText: String?
+    let grantedText: String
+    let deniedText: String
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: isGranted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(isGranted ? Color.green : Color.red)
+                .font(.system(size: 18, weight: .semibold))
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+
+                    Text(statusText ?? (isGranted ? "已授权" : "未授权"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(statusColor)
+                }
+
+                Text(isGranted ? grantedText : deniedText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Button(buttonTitle, action: action)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+    }
+
+    private var statusColor: Color {
+        switch statusText {
+        case "需重启":
+            return .orange
+        default:
+            return isGranted ? .green : .red
         }
     }
 }

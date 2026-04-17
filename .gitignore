@@ -127,3 +127,5 @@ default.profraw
 OpenSuperWhisper.dmg.sha256
 dev_config.json
 .worktrees/
+.neux-ai-dev/
+build-signed-test/
