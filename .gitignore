@@ -66,6 +66,9 @@ __pycache__/
 # Distribution / packaging
 dist/
 build/
+build-signed-test/
+DerivedData/
+*.xcresult
 *.egg-info/
 
 # Virtual environments
@@ -106,6 +109,7 @@ tools/
 /SourcePackages
 SourcePackages
 .build
+libwhisper/build/
 default.profraw
 
 # Fastlane
