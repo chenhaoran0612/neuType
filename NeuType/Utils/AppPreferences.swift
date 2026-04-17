@@ -129,3 +129,64 @@ final class AppPreferences {
         set { llmModel = newValue }
     }
 }
+
+struct VisibleSettingsSnapshot: Codable, Equatable {
+    static let currentVersion = 1
+
+    let version: Int
+    let modifierOnlyHotkey: String
+    let indicatorOriginX: Double?
+    let indicatorOriginY: Double?
+    let asrAPIBaseURL: String
+    let asrAPIKey: String
+    let asrModel: String
+    let llmAPIBaseURL: String
+    let llmAPIKey: String
+    let llmModel: String
+    let llmOptimizationPrompt: String
+}
+
+enum VisibleSettingsStore {
+    static func exportVisibleSettings(to url: URL) throws {
+        let snapshot = AppPreferences.shared.makeVisibleSettingsSnapshot()
+        let data = try JSONEncoder().encode(snapshot)
+        try data.write(to: url, options: .atomic)
+    }
+
+    static func importVisibleSettings(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        let snapshot = try JSONDecoder().decode(VisibleSettingsSnapshot.self, from: data)
+        AppPreferences.shared.applyVisibleSettingsSnapshot(snapshot)
+    }
+}
+
+private extension AppPreferences {
+    func makeVisibleSettingsSnapshot() -> VisibleSettingsSnapshot {
+        VisibleSettingsSnapshot(
+            version: VisibleSettingsSnapshot.currentVersion,
+            modifierOnlyHotkey: modifierOnlyHotkey,
+            indicatorOriginX: indicatorOriginX,
+            indicatorOriginY: indicatorOriginY,
+            asrAPIBaseURL: asrAPIBaseURL,
+            asrAPIKey: asrAPIKey,
+            asrModel: asrModel,
+            llmAPIBaseURL: llmAPIBaseURL,
+            llmAPIKey: llmAPIKey,
+            llmModel: llmModel,
+            llmOptimizationPrompt: llmOptimizationPrompt
+        )
+    }
+
+    func applyVisibleSettingsSnapshot(_ snapshot: VisibleSettingsSnapshot) {
+        modifierOnlyHotkey = snapshot.modifierOnlyHotkey
+        indicatorOriginX = snapshot.indicatorOriginX
+        indicatorOriginY = snapshot.indicatorOriginY
+        asrAPIBaseURL = snapshot.asrAPIBaseURL
+        asrAPIKey = snapshot.asrAPIKey
+        asrModel = snapshot.asrModel
+        llmAPIBaseURL = snapshot.llmAPIBaseURL
+        llmAPIKey = snapshot.llmAPIKey
+        llmModel = snapshot.llmModel
+        llmOptimizationPrompt = snapshot.llmOptimizationPrompt
+    }
+}

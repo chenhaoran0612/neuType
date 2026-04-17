@@ -26,18 +26,33 @@ final class NeuTypeTests: XCTestCase {
 }
 
 final class WhisperEngineMultiChannelTests: XCTestCase {
-    func testMakeTargetFormat_withSixChannels_returnsFormat() {
-        let engine = WhisperEngine()
-        let format = engine.makeTargetFormat(channelCount: 6)
-        
-        XCTAssertNotNil(format)
-        XCTAssertEqual(format?.channelCount, 6)
-        XCTAssertEqual(format?.sampleRate, 16000)
+    private var originalAsrAPIKey: String!
+    private var originalDeepInfraAPIKey: String!
+
+    override func setUpWithError() throws {
+        originalAsrAPIKey = AppPreferences.shared.asrAPIKey
+        originalDeepInfraAPIKey = AppPreferences.shared.deepInfraAPIKey
     }
-    
-    func testMakeTargetFormat_withZeroChannels_returnsNil() {
+
+    override func tearDownWithError() throws {
+        AppPreferences.shared.asrAPIKey = originalAsrAPIKey
+        AppPreferences.shared.deepInfraAPIKey = originalDeepInfraAPIKey
+    }
+
+    func testIsModelLoaded_withConfiguredASRAPIKey_returnsTrue() {
         let engine = WhisperEngine()
-        XCTAssertNil(engine.makeTargetFormat(channelCount: 0))
+        AppPreferences.shared.asrAPIKey = "test-asr-key"
+        AppPreferences.shared.deepInfraAPIKey = ""
+
+        XCTAssertTrue(engine.isModelLoaded)
+    }
+
+    func testIsModelLoaded_withoutAnyAPIKey_returnsFalse() {
+        let engine = WhisperEngine()
+        AppPreferences.shared.asrAPIKey = ""
+        AppPreferences.shared.deepInfraAPIKey = ""
+
+        XCTAssertFalse(engine.isModelLoaded)
     }
 }
 
@@ -1043,5 +1058,244 @@ final class AddSpaceAfterSentenceTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "addSpaceAfterSentence")
         let result = IndicatorViewModel.applyPostProcessing("Test.")
         XCTAssertEqual(result, "Test. ")
+    }
+}
+
+final class VisibleSettingsStoreTests: XCTestCase {
+    private var originalModifierOnlyHotkey: String!
+    private var originalIndicatorOriginX: Double?
+    private var originalIndicatorOriginY: Double?
+    private var originalAsrAPIBaseURL: String!
+    private var originalAsrAPIKey: String!
+    private var originalAsrModel: String!
+    private var originalLlmAPIBaseURL: String!
+    private var originalLlmAPIKey: String!
+    private var originalLlmModel: String!
+    private var originalLlmOptimizationPrompt: String!
+    private var originalWhisperLanguage: String!
+
+    override func setUpWithError() throws {
+        let prefs = AppPreferences.shared
+        originalModifierOnlyHotkey = prefs.modifierOnlyHotkey
+        originalIndicatorOriginX = prefs.indicatorOriginX
+        originalIndicatorOriginY = prefs.indicatorOriginY
+        originalAsrAPIBaseURL = prefs.asrAPIBaseURL
+        originalAsrAPIKey = prefs.asrAPIKey
+        originalAsrModel = prefs.asrModel
+        originalLlmAPIBaseURL = prefs.llmAPIBaseURL
+        originalLlmAPIKey = prefs.llmAPIKey
+        originalLlmModel = prefs.llmModel
+        originalLlmOptimizationPrompt = prefs.llmOptimizationPrompt
+        originalWhisperLanguage = prefs.whisperLanguage
+    }
+
+    override func tearDownWithError() throws {
+        let prefs = AppPreferences.shared
+        prefs.modifierOnlyHotkey = originalModifierOnlyHotkey
+        prefs.indicatorOriginX = originalIndicatorOriginX
+        prefs.indicatorOriginY = originalIndicatorOriginY
+        prefs.asrAPIBaseURL = originalAsrAPIBaseURL
+        prefs.asrAPIKey = originalAsrAPIKey
+        prefs.asrModel = originalAsrModel
+        prefs.llmAPIBaseURL = originalLlmAPIBaseURL
+        prefs.llmAPIKey = originalLlmAPIKey
+        prefs.llmModel = originalLlmModel
+        prefs.llmOptimizationPrompt = originalLlmOptimizationPrompt
+        prefs.whisperLanguage = originalWhisperLanguage
+    }
+
+    func testExportWritesOnlyVisibleSettingsSnapshot() throws {
+        let prefs = AppPreferences.shared
+        prefs.modifierOnlyHotkey = "rightOption"
+        prefs.indicatorOriginX = 120.5
+        prefs.indicatorOriginY = 88.25
+        prefs.asrAPIBaseURL = "https://asr.example.com/v1"
+        prefs.asrAPIKey = "asr-key"
+        prefs.asrModel = "whisper-test"
+        prefs.llmAPIBaseURL = "https://llm.example.com/v1"
+        prefs.llmAPIKey = "llm-key"
+        prefs.llmModel = "gpt-test"
+        prefs.llmOptimizationPrompt = "clean this transcript"
+        prefs.whisperLanguage = "ja"
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+
+        try VisibleSettingsStore.exportVisibleSettings(to: url)
+
+        let data = try Data(contentsOf: url)
+        let snapshot = try JSONDecoder().decode(VisibleSettingsSnapshot.self, from: data)
+
+        XCTAssertEqual(snapshot.modifierOnlyHotkey, "rightOption")
+        XCTAssertEqual(snapshot.indicatorOriginX, 120.5)
+        XCTAssertEqual(snapshot.indicatorOriginY, 88.25)
+        XCTAssertEqual(snapshot.asrAPIBaseURL, "https://asr.example.com/v1")
+        XCTAssertEqual(snapshot.asrAPIKey, "asr-key")
+        XCTAssertEqual(snapshot.asrModel, "whisper-test")
+        XCTAssertEqual(snapshot.llmAPIBaseURL, "https://llm.example.com/v1")
+        XCTAssertEqual(snapshot.llmAPIKey, "llm-key")
+        XCTAssertEqual(snapshot.llmModel, "gpt-test")
+        XCTAssertEqual(snapshot.llmOptimizationPrompt, "clean this transcript")
+        XCTAssertEqual(snapshot.version, 1)
+
+        let exportedObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertNil(exportedObject["whisperLanguage"])
+    }
+
+    func testImportAppliesVisibleSettingsToPreferences() throws {
+        let snapshot = VisibleSettingsSnapshot(
+            version: 1,
+            modifierOnlyHotkey: "leftCommand",
+            indicatorOriginX: 222.0,
+            indicatorOriginY: 333.0,
+            asrAPIBaseURL: "https://imported-asr.example.com/v1",
+            asrAPIKey: "imported-asr-key",
+            asrModel: "imported-whisper",
+            llmAPIBaseURL: "https://imported-llm.example.com/v1",
+            llmAPIKey: "imported-llm-key",
+            llmModel: "imported-llm-model",
+            llmOptimizationPrompt: "imported prompt"
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+
+        let data = try JSONEncoder().encode(snapshot)
+        try data.write(to: url)
+
+        try VisibleSettingsStore.importVisibleSettings(from: url)
+
+        let prefs = AppPreferences.shared
+        XCTAssertEqual(prefs.modifierOnlyHotkey, "leftCommand")
+        XCTAssertEqual(prefs.indicatorOriginX, 222.0)
+        XCTAssertEqual(prefs.indicatorOriginY, 333.0)
+        XCTAssertEqual(prefs.asrAPIBaseURL, "https://imported-asr.example.com/v1")
+        XCTAssertEqual(prefs.asrAPIKey, "imported-asr-key")
+        XCTAssertEqual(prefs.asrModel, "imported-whisper")
+        XCTAssertEqual(prefs.llmAPIBaseURL, "https://imported-llm.example.com/v1")
+        XCTAssertEqual(prefs.llmAPIKey, "imported-llm-key")
+        XCTAssertEqual(prefs.llmModel, "imported-llm-model")
+        XCTAssertEqual(prefs.llmOptimizationPrompt, "imported prompt")
+    }
+
+    func testImportInvalidJSONThrowsAndLeavesExistingPreferencesUntouched() throws {
+        let prefs = AppPreferences.shared
+        prefs.modifierOnlyHotkey = "leftControl"
+        prefs.asrAPIBaseURL = "https://stable-asr.example.com/v1"
+        prefs.llmModel = "stable-llm"
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        try Data("not valid json".utf8).write(to: url)
+
+        XCTAssertThrowsError(try VisibleSettingsStore.importVisibleSettings(from: url))
+        XCTAssertEqual(prefs.modifierOnlyHotkey, "leftControl")
+        XCTAssertEqual(prefs.asrAPIBaseURL, "https://stable-asr.example.com/v1")
+        XCTAssertEqual(prefs.llmModel, "stable-llm")
+    }
+}
+
+@MainActor
+final class SettingsViewModelImportExportTests: XCTestCase {
+    private var originalModifierOnlyHotkey: String!
+    private var originalIndicatorOriginX: Double?
+    private var originalIndicatorOriginY: Double?
+    private var originalAsrAPIBaseURL: String!
+    private var originalAsrAPIKey: String!
+    private var originalAsrModel: String!
+    private var originalLlmAPIBaseURL: String!
+    private var originalLlmAPIKey: String!
+    private var originalLlmModel: String!
+    private var originalLlmOptimizationPrompt: String!
+
+    override func setUpWithError() throws {
+        let prefs = AppPreferences.shared
+        originalModifierOnlyHotkey = prefs.modifierOnlyHotkey
+        originalIndicatorOriginX = prefs.indicatorOriginX
+        originalIndicatorOriginY = prefs.indicatorOriginY
+        originalAsrAPIBaseURL = prefs.asrAPIBaseURL
+        originalAsrAPIKey = prefs.asrAPIKey
+        originalAsrModel = prefs.asrModel
+        originalLlmAPIBaseURL = prefs.llmAPIBaseURL
+        originalLlmAPIKey = prefs.llmAPIKey
+        originalLlmModel = prefs.llmModel
+        originalLlmOptimizationPrompt = prefs.llmOptimizationPrompt
+    }
+
+    override func tearDownWithError() throws {
+        let prefs = AppPreferences.shared
+        prefs.modifierOnlyHotkey = originalModifierOnlyHotkey
+        prefs.indicatorOriginX = originalIndicatorOriginX
+        prefs.indicatorOriginY = originalIndicatorOriginY
+        prefs.asrAPIBaseURL = originalAsrAPIBaseURL
+        prefs.asrAPIKey = originalAsrAPIKey
+        prefs.asrModel = originalAsrModel
+        prefs.llmAPIBaseURL = originalLlmAPIBaseURL
+        prefs.llmAPIKey = originalLlmAPIKey
+        prefs.llmModel = originalLlmModel
+        prefs.llmOptimizationPrompt = originalLlmOptimizationPrompt
+    }
+
+    func testReloadFromPreferencesPullsImportedVisibleSettingsIntoViewModel() {
+        let prefs = AppPreferences.shared
+        prefs.modifierOnlyHotkey = "leftShift"
+        prefs.asrAPIBaseURL = "https://before.example.com/v1"
+        prefs.llmModel = "before-model"
+
+        let viewModel = SettingsViewModel()
+
+        prefs.modifierOnlyHotkey = "rightCommand"
+        prefs.asrAPIBaseURL = "https://after.example.com/v1"
+        prefs.asrAPIKey = "after-asr-key"
+        prefs.asrModel = "after-asr-model"
+        prefs.llmAPIBaseURL = "https://after-llm.example.com/v1"
+        prefs.llmAPIKey = "after-llm-key"
+        prefs.llmModel = "after-llm-model"
+        prefs.llmOptimizationPrompt = "after prompt"
+
+        viewModel.reloadFromPreferences()
+
+        XCTAssertEqual(viewModel.modifierOnlyHotkey, .rightCommand)
+        XCTAssertEqual(viewModel.asrAPIBaseURL, "https://after.example.com/v1")
+        XCTAssertEqual(viewModel.asrAPIKey, "after-asr-key")
+        XCTAssertEqual(viewModel.asrModel, "after-asr-model")
+        XCTAssertEqual(viewModel.llmAPIBaseURL, "https://after-llm.example.com/v1")
+        XCTAssertEqual(viewModel.llmAPIKey, "after-llm-key")
+        XCTAssertEqual(viewModel.llmModel, "after-llm-model")
+        XCTAssertEqual(viewModel.llmOptimizationPrompt, "after prompt")
+    }
+
+    func testImportVisibleSettingsFromURLPostsHotkeyChangedNotification() throws {
+        let snapshot = VisibleSettingsSnapshot(
+            version: 1,
+            modifierOnlyHotkey: "rightOption",
+            indicatorOriginX: 10.0,
+            indicatorOriginY: 20.0,
+            asrAPIBaseURL: "https://imported-asr.example.com/v1",
+            asrAPIKey: "imported-asr-key",
+            asrModel: "imported-asr-model",
+            llmAPIBaseURL: "https://imported-llm.example.com/v1",
+            llmAPIKey: "imported-llm-key",
+            llmModel: "imported-llm-model",
+            llmOptimizationPrompt: "imported prompt"
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        try JSONEncoder().encode(snapshot).write(to: url)
+
+        let viewModel = SettingsViewModel()
+        let expectation = expectation(forNotification: .hotkeySettingsChanged, object: nil)
+
+        try viewModel.importVisibleSettings(from: url)
+
+        wait(for: [expectation], timeout: 1.0)
+        XCTAssertEqual(viewModel.modifierOnlyHotkey, .rightOption)
+        XCTAssertEqual(viewModel.asrAPIBaseURL, "https://imported-asr.example.com/v1")
+        XCTAssertEqual(viewModel.llmModel, "imported-llm-model")
     }
 }

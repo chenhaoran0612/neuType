@@ -1,6 +1,8 @@
+import AppKit
 import Carbon
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 class SettingsViewModel: ObservableObject {
@@ -41,6 +43,8 @@ class SettingsViewModel: ObservableObject {
 
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
+    @Published var settingsTransferStatusMessage: String?
+    @Published var settingsTransferStatusIsError = false
 
     @MainActor
     var filteredLogs: [RequestLogEntry] {
@@ -69,6 +73,67 @@ class SettingsViewModel: ObservableObject {
         guard isAdjustingIndicatorPosition else { return }
         IndicatorWindowManager.shared.hide()
         isAdjustingIndicatorPosition = false
+    }
+
+    func reloadFromPreferences() {
+        modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
+        asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
+        asrAPIKey = AppPreferences.shared.asrAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.asrAPIKey
+        asrModel = AppPreferences.shared.asrModel
+        llmAPIBaseURL = AppPreferences.shared.llmAPIBaseURL
+        llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
+        llmModel = AppPreferences.shared.llmModel
+        llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+    }
+
+    func exportVisibleSettings(to url: URL) throws {
+        try VisibleSettingsStore.exportVisibleSettings(to: url)
+    }
+
+    func importVisibleSettings(from url: URL) throws {
+        try VisibleSettingsStore.importVisibleSettings(from: url)
+        reloadFromPreferences()
+    }
+
+    func presentExportPanel() {
+        let panel = NSSavePanel()
+        panel.title = "Export Settings"
+        panel.message = "Save the current visible settings as a JSON file."
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "neutype-settings.json"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try exportVisibleSettings(to: url)
+            updateTransferStatus(message: "Exported settings to \(url.lastPathComponent)", isError: false)
+        } catch {
+            updateTransferStatus(message: "Export failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    func presentImportPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Settings"
+        panel.message = "Choose a JSON file to import visible settings."
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try importVisibleSettings(from: url)
+            updateTransferStatus(message: "Imported settings from \(url.lastPathComponent)", isError: false)
+        } catch {
+            updateTransferStatus(message: "Import failed: \(error.localizedDescription)", isError: true)
+        }
+    }
+
+    private func updateTransferStatus(message: String, isError: Bool) {
+        settingsTransferStatusMessage = message
+        settingsTransferStatusIsError = isError
     }
 }
 
@@ -127,6 +192,24 @@ struct SettingsView: View {
         .background(Color(.windowBackgroundColor))
         .safeAreaInset(edge: .bottom) {
             HStack {
+                Button("Import Settings…") {
+                    viewModel.presentImportPanel()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Export Settings…") {
+                    viewModel.presentExportPanel()
+                }
+                .buttonStyle(.bordered)
+
+                if let statusMessage = viewModel.settingsTransferStatusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundColor(viewModel.settingsTransferStatusIsError ? .red : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
                 Spacer()
