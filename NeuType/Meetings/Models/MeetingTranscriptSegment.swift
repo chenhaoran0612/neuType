@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-struct MeetingTranscriptSegment: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
+struct MeetingTranscriptSegment: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable, Sendable {
     let id: UUID
     let meetingID: UUID
     let sequence: Int

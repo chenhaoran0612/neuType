@@ -1,4 +1,4 @@
-import Foundation
+@preconcurrency import Foundation
 
 @MainActor
 final class MeetingListViewModel: ObservableObject {

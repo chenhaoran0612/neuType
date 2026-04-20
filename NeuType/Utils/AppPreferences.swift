@@ -21,7 +21,7 @@ struct OptionalUserDefault<T> {
     }
 }
 
-final class AppPreferences {
+final class AppPreferences: @unchecked Sendable {
     static let shared = AppPreferences()
     private init() {}
     

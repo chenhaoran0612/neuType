@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-enum MeetingRecordStatus: String, Codable {
+enum MeetingRecordStatus: String, Codable, Sendable {
     case recording
     case unprocessed
     case processing
@@ -9,7 +9,7 @@ enum MeetingRecordStatus: String, Codable {
     case failed
 }
 
-enum MeetingSummaryStatus: String, Codable {
+enum MeetingSummaryStatus: String, Codable, Sendable {
     case unsubmitted
     case received
     case queued
@@ -18,7 +18,7 @@ enum MeetingSummaryStatus: String, Codable {
     case failed
 }
 
-struct MeetingSummaryActionItem: Codable, Equatable {
+struct MeetingSummaryActionItem: Codable, Equatable, Sendable {
     let owner: String
     let task: String
     let dueAt: String?
@@ -30,7 +30,7 @@ struct MeetingSummaryActionItem: Codable, Equatable {
     }
 }
 
-struct MeetingSummaryResult: Codable, Equatable {
+struct MeetingSummaryResult: Codable, Equatable, Sendable {
     let meetingTitle: String
     let meetingStartedAt: Date?
     let meetingEndedAt: Date?
@@ -52,7 +52,7 @@ struct MeetingSummaryResult: Codable, Equatable {
     }
 }
 
-struct MeetingRecord: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable {
+struct MeetingRecord: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable, Sendable {
     let id: UUID
     let createdAt: Date
     var title: String

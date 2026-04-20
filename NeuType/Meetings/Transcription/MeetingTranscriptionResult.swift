@@ -1,6 +1,6 @@
 import Foundation
 
-struct MeetingTranscriptionResult: Decodable, Equatable {
+struct MeetingTranscriptionResult: Decodable, Equatable, Sendable {
     let fullText: String
     let segments: [MeetingTranscriptionSegmentPayload]
 
@@ -10,7 +10,7 @@ struct MeetingTranscriptionResult: Decodable, Equatable {
     }
 }
 
-struct MeetingTranscriptionSegmentPayload: Decodable, Equatable {
+struct MeetingTranscriptionSegmentPayload: Decodable, Equatable, Sendable {
     let sequence: Int
     let speakerLabel: String
     let startTime: TimeInterval

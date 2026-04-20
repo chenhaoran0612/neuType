@@ -88,12 +88,9 @@ class SettingsViewModel: ObservableObject {
 
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
-<<<<<<< HEAD
     @Published var settingsTransferStatusMessage: String?
     @Published var settingsTransferStatusIsError = false
-=======
     @Published var meetingShortcutError: String?
->>>>>>> codex/meeting-minutes-vibevoice
 
     @MainActor
     var filteredLogs: [RequestLogEntry] {
@@ -137,7 +134,6 @@ class SettingsViewModel: ObservableObject {
         isAdjustingIndicatorPosition = false
     }
 
-<<<<<<< HEAD
     func reloadFromPreferences() {
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
@@ -147,6 +143,7 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        validateMeetingShortcut()
     }
 
     func exportVisibleSettings(to url: URL) throws {
@@ -197,7 +194,8 @@ class SettingsViewModel: ObservableObject {
     private func updateTransferStatus(message: String, isError: Bool) {
         settingsTransferStatusMessage = message
         settingsTransferStatusIsError = isError
-=======
+    }
+
     func validateMeetingShortcut() {
         let validator = MeetingShortcutValidator(
             dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord)
@@ -206,7 +204,6 @@ class SettingsViewModel: ObservableObject {
         meetingShortcutError = validator.canUse(meetingShortcut)
             ? nil
             : "Meeting shortcut cannot match the dictation shortcut."
->>>>>>> codex/meeting-minutes-vibevoice
     }
 }
 

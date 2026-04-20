@@ -1,6 +1,6 @@
 import Foundation
 
-protocol MeetingSummarizing {
+protocol MeetingSummarizing: Sendable {
     func submitMeeting(meetingID: UUID) async throws
     func resumeMeeting(meetingID: UUID) async throws
 }
@@ -21,7 +21,7 @@ private actor MeetingSummaryPollingRegistry {
     }
 }
 
-final class MeetingSummaryService: MeetingSummarizing {
+final class MeetingSummaryService: MeetingSummarizing, Sendable {
     private static let pollingRegistry = MeetingSummaryPollingRegistry()
 
     private let client: MeetingSummaryClientProtocol

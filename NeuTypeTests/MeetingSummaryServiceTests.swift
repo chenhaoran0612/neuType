@@ -245,6 +245,33 @@ final class MeetingSummaryServiceTests: XCTestCase {
         XCTAssertTrue(submission.idempotencyKey.hasPrefix("neutype-\(meeting.id.uuidString)-summary-retry-"))
     }
 
+    func testConcurrentSubmissionsOnSharedServiceKeepMeetingSummariesSeparated() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meetingA = makeMeeting(id: UUID(), title: "Meeting A", transcriptPreview: "alpha", status: .completed)
+        let meetingB = makeMeeting(id: UUID(), title: "Meeting B", transcriptPreview: "beta", status: .completed)
+        try await store.insertMeeting(meetingA, segments: [
+            makeSegment(meetingID: meetingA.id, sequence: 0, speakerLabel: "Speaker 1", text: "alpha")
+        ])
+        try await store.insertMeeting(meetingB, segments: [
+            makeSegment(meetingID: meetingB.id, sequence: 0, speakerLabel: "Speaker 1", text: "beta")
+        ])
+
+        let client = ConcurrentStubMeetingSummaryClient(meetingA: meetingA, meetingB: meetingB)
+        let service = MeetingSummaryService(client: client, store: store, pollInterval: .zero, pollsInBackground: false)
+
+        async let submitA = service.submitMeeting(meetingID: meetingA.id)
+        async let submitB = service.submitMeeting(meetingID: meetingB.id)
+        _ = try await (submitA, submitB)
+
+        let savedA = try await store.fetchMeeting(id: meetingA.id)
+        let savedB = try await store.fetchMeeting(id: meetingB.id)
+
+        XCTAssertEqual(savedA?.summaryText, "summary-a")
+        XCTAssertEqual(savedB?.summaryText, "summary-b")
+        XCTAssertEqual(savedA?.summaryShareURL, "https://ai-worker.neuxnet.com/share/job-a")
+        XCTAssertEqual(savedB?.summaryShareURL, "https://ai-worker.neuxnet.com/share/job-b")
+    }
+
     func testPollResponseDecodesFailedPayloadWithEmptyResultObject() throws {
         let payload = Data(
             """
@@ -347,7 +374,7 @@ final class MeetingSummaryServiceTests: XCTestCase {
     }
 }
 
-private final class StubMeetingSummaryClient: MeetingSummaryClientProtocol {
+private final class StubMeetingSummaryClient: MeetingSummaryClientProtocol, @unchecked Sendable {
     var submittedMeetings: [MeetingSummarySubmissionPayload] = []
     var fetchedJobIDs: [String] = []
     private let createResponse: MeetingSummaryCreateResponse
@@ -372,7 +399,7 @@ private final class StubMeetingSummaryClient: MeetingSummaryClientProtocol {
     }
 }
 
-private final class SlowStubMeetingSummaryClient: MeetingSummaryClientProtocol {
+private final class SlowStubMeetingSummaryClient: MeetingSummaryClientProtocol, @unchecked Sendable {
     private let response: MeetingSummaryPollResponse
     private(set) var fetchCount = 0
 
@@ -388,6 +415,63 @@ private final class SlowStubMeetingSummaryClient: MeetingSummaryClientProtocol {
         fetchCount += 1
         try? await Task.sleep(for: .milliseconds(50))
         return response
+    }
+}
+
+private actor ConcurrentStubMeetingSummaryClient: MeetingSummaryClientProtocol {
+    private let responsesByMeetingID: [String: MeetingSummaryCreateResponse]
+    private let pollsByJobID: [String: MeetingSummaryPollResponse]
+
+    init(meetingA: MeetingRecord, meetingB: MeetingRecord) {
+        responsesByMeetingID = [
+            meetingA.id.uuidString: MeetingSummaryCreateResponse(
+                jobID: "job-a",
+                taskID: "task-a",
+                status: .queued,
+                pollURL: "/api/integrations/neutype/meetings/job-a",
+                externalMeetingID: meetingA.id.uuidString
+            ),
+            meetingB.id.uuidString: MeetingSummaryCreateResponse(
+                jobID: "job-b",
+                taskID: "task-b",
+                status: .queued,
+                pollURL: "/api/integrations/neutype/meetings/job-b",
+                externalMeetingID: meetingB.id.uuidString
+            ),
+        ]
+        pollsByJobID = [
+            "job-a": .completed(
+                jobID: "job-a",
+                externalMeetingID: meetingA.id.uuidString,
+                taskID: "task-a",
+                summaryText: "summary-a",
+                fullText: "# Summary A",
+                result: .fixture(),
+                shareURL: "https://ai-worker.neuxnet.com/share/job-a"
+            ),
+            "job-b": .completed(
+                jobID: "job-b",
+                externalMeetingID: meetingB.id.uuidString,
+                taskID: "task-b",
+                summaryText: "summary-b",
+                fullText: "# Summary B",
+                result: .fixture(),
+                shareURL: "https://ai-worker.neuxnet.com/share/job-b"
+            ),
+        ]
+    }
+
+    func submitMeeting(_ payload: MeetingSummarySubmissionPayload) async throws -> MeetingSummaryCreateResponse {
+        try? await Task.sleep(for: .milliseconds(payload.meetingTitle == "Meeting A" ? 30 : 10))
+        return try XCTUnwrap(
+            responsesByMeetingID[payload.externalMeetingID],
+            "Missing create response for \(payload.externalMeetingID)"
+        )
+    }
+
+    func fetchMeeting(jobID: String) async throws -> MeetingSummaryPollResponse {
+        try? await Task.sleep(for: .milliseconds(jobID == "job-a" ? 10 : 30))
+        return try XCTUnwrap(pollsByJobID[jobID], "Missing poll response for \(jobID)")
     }
 }
 

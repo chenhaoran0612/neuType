@@ -97,6 +97,49 @@ final class VibeVoiceRunnerClientTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Please transcribe"))
     }
 
+    func testTranscribeIncludesRepetitionPenaltyInMeetingVibeVoiceRequest() async throws {
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        try Data("demo-audio".utf8).write(to: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let session = makeStubSession()
+        let config = StubMeetingVibeVoiceConfigProvider(
+            config: MeetingVibeVoiceConfig(
+                baseURL: "http://workspace.featurize.cn:12930",
+                apiPrefix: "",
+                apiKey: "vv_test_key",
+                contextInfo: "",
+                maxNewTokens: 4096,
+                temperature: 0.0,
+                topP: 1.0,
+                doSample: false,
+                repetitionPenalty: 1.12
+            )
+        )
+
+        URLProtocolStub.requestHandlers = [
+            { request in
+                (
+                    URLProtocolStub.makeHTTPURLResponse(for: request, statusCode: 200),
+                    #"""
+                    {"id":"chatcmpl-penalty","object":"chat.completion","model":"vibevoice","choices":[{"index":0,"message":{"role":"assistant","content":"[{\"Start\":0,\"End\":1,\"Speaker\":0,\"Content\":\"hello\"}]"},"finish_reason":"stop"}]}
+                    """#.data(using: .utf8)!
+                )
+            },
+        ]
+
+        let client = VibeVoiceRunnerClient(session: session, configProvider: config)
+        _ = try await client.transcribe(audioURL: audioURL, hotwords: [], progress: nil)
+
+        let request = try XCTUnwrap(URLProtocolStub.recordedRequests[safe: 0])
+        let requestBody = try XCTUnwrap(request.httpBody ?? request.httpBodyStream.flatMap(Self.readStream))
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestBody) as? [String: Any])
+
+        XCTAssertEqual(payload["repetition_penalty"] as? Double, 1.12)
+    }
+
     func testTranscribeReportsProgressStagesInOrder() async throws {
         let audioURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -501,6 +544,10 @@ final class VibeVoiceRunnerClientTests: XCTestCase {
         XCTAssertEqual(result.segments.map(\.sequence), [0, 1, 2])
         XCTAssertEqual(result.segments.map(\.startTime), [0, 0.01, 0.02])
         XCTAssertEqual(result.segments.map(\.endTime), [0.01, 0.02, 0.03])
+    }
+
+    func testDefaultChunkDurationIsFiveMinutes() {
+        XCTAssertEqual(VibeVoiceRunnerClient.defaultChunkDurationForTesting(), 5 * 60)
     }
 
     func testAudioChunkingPrefersLowEnergyBoundaryNearChunkEdge() throws {

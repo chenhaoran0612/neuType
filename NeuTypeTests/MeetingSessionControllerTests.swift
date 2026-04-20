@@ -390,7 +390,7 @@ private final class ShortcutStubMeetingPermissions: MeetingPermissionChecking {
     func requestScreenRecordingPermissionOrOpenSystemPreferences() {}
 }
 
-private final class ShortcutStubMeetingRecorder: MeetingRecording {
+private final class ShortcutStubMeetingRecorder: MeetingRecording, @unchecked Sendable {
     private(set) var startCalls = 0
 
     func startRecording() async throws {

@@ -1,4 +1,4 @@
-import Foundation
+@preconcurrency import Foundation
 
 enum MeetingDetailTab: String, CaseIterable, Equatable {
     case transcript
@@ -287,7 +287,7 @@ final class MeetingDetailViewModel: ObservableObject {
     var transcriptRequestLogs: [RequestLogEntry] {
         Array(
             RequestLogStore.shared.entries
-                .filter { $0.kind == .asr }
+                .filter { $0.kind == .asr && $0.meetingID == meetingID }
                 .reversed()
                 .prefix(20)
         )

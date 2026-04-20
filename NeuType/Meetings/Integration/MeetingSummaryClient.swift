@@ -20,7 +20,7 @@ enum MeetingSummaryClientError: LocalizedError {
     }
 }
 
-struct MeetingSummarySubmissionPayload: Equatable {
+struct MeetingSummarySubmissionPayload: Equatable, Sendable {
     let externalMeetingID: String
     let idempotencyKey: String
     let meetingTitle: String
@@ -33,7 +33,7 @@ struct MeetingSummarySubmissionPayload: Equatable {
     let audioURL: URL
 }
 
-struct MeetingSummaryCreateResponse: Decodable, Equatable {
+struct MeetingSummaryCreateResponse: Decodable, Equatable, Sendable {
     let jobID: String
     let taskID: String
     let status: MeetingSummaryStatus
@@ -80,7 +80,7 @@ struct MeetingSummaryCreateResponse: Decodable, Equatable {
     }
 }
 
-struct MeetingSummaryPollResponse: Decodable, Equatable {
+struct MeetingSummaryPollResponse: Decodable, Equatable, Sendable {
     let jobID: String
     let externalMeetingID: String
     let taskID: String
@@ -165,25 +165,21 @@ struct MeetingSummaryPollResponse: Decodable, Equatable {
     }
 }
 
-protocol MeetingSummaryClientProtocol {
+protocol MeetingSummaryClientProtocol: Sendable {
     func submitMeeting(_ payload: MeetingSummarySubmissionPayload) async throws -> MeetingSummaryCreateResponse
     func fetchMeeting(jobID: String) async throws -> MeetingSummaryPollResponse
 }
 
-final class MeetingSummaryClient: MeetingSummaryClientProtocol {
+final class MeetingSummaryClient: MeetingSummaryClientProtocol, Sendable {
     private let session: URLSession
     private let configProvider: MeetingSummaryConfigProviding
-    private let decoder: JSONDecoder
 
     init(
         session: URLSession = .shared,
-        configProvider: MeetingSummaryConfigProviding = AppPreferences.shared,
-        decoder: JSONDecoder = JSONDecoder()
+        configProvider: MeetingSummaryConfigProviding = AppPreferences.shared
     ) {
         self.session = session
         self.configProvider = configProvider
-        self.decoder = decoder
-        self.decoder.dateDecodingStrategy = .iso8601
     }
 
     func submitMeeting(_ payload: MeetingSummarySubmissionPayload) async throws -> MeetingSummaryCreateResponse {
@@ -211,7 +207,7 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
             "Meeting summary submit response statusCode=\(httpResponse.statusCode) bodyPreview=\(Self.bodyPreview(from: data))"
         )
         try Self.ensureSuccess(httpResponse, data: data)
-        let decoded = try decoder.decode(MeetingSummaryCreateResponse.self, from: data)
+        let decoded = try Self.makeDecoder().decode(MeetingSummaryCreateResponse.self, from: data)
         let result = MeetingSummaryCreateResponse(
             jobID: decoded.jobID,
             taskID: decoded.taskID,
@@ -244,7 +240,7 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
             "Meeting summary poll response statusCode=\(httpResponse.statusCode) jobID=\(jobID) bodyPreview=\(Self.bodyPreview(from: data))"
         )
         try Self.ensureSuccess(httpResponse, data: data)
-        let decoded = try decoder.decode(MeetingSummaryPollResponse.self, from: data)
+        let decoded = try Self.makeDecoder().decode(MeetingSummaryPollResponse.self, from: data)
         let result = MeetingSummaryPollResponse(
             jobID: decoded.jobID,
             externalMeetingID: decoded.externalMeetingID,
@@ -371,6 +367,12 @@ final class MeetingSummaryClient: MeetingSummaryClientProtocol {
 
     private static func rawResponseJSON(from data: Data) -> String {
         String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
 

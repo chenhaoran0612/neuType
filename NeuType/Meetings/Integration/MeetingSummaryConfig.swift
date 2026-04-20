@@ -1,6 +1,6 @@
 import Foundation
 
-struct MeetingSummaryConfig: Equatable {
+struct MeetingSummaryConfig: Equatable, Sendable {
     static let defaultBaseURL = "https://ai-worker.neuxnet.com"
 
     let baseURL: String
@@ -26,7 +26,7 @@ struct MeetingSummaryConfig: Equatable {
     }
 }
 
-protocol MeetingSummaryConfigProviding {
+protocol MeetingSummaryConfigProviding: Sendable {
     var meetingSummaryConfig: MeetingSummaryConfig { get }
 }
 

@@ -170,7 +170,7 @@ private final class StubMeetingPermissions: MeetingPermissionChecking {
     }
 }
 
-private final class StubMeetingRecorder: MeetingRecording {
+private final class StubMeetingRecorder: MeetingRecording, @unchecked Sendable {
     private(set) var startCalls = 0
     private(set) var stopCalls = 0
     private let stopRecordingURL: URL?
@@ -191,7 +191,7 @@ private final class StubMeetingRecorder: MeetingRecording {
     func cancelRecording() {}
 }
 
-private final class StubMeetingTranscriptionService: MeetingTranscribing {
+private final class StubMeetingTranscriptionService: MeetingTranscribing, @unchecked Sendable {
     private(set) var transcribedMeetingIDs: [UUID] = []
     private(set) var transcribedAudioURLs: [URL] = []
     private let delayNanoseconds: UInt64
@@ -209,7 +209,7 @@ private final class StubMeetingTranscriptionService: MeetingTranscribing {
     }
 }
 
-private final class StubMeetingSummaryService: MeetingSummarizing {
+private final class StubMeetingSummaryService: MeetingSummarizing, @unchecked Sendable {
     private(set) var submittedMeetingIDs: [UUID] = []
 
     func submitMeeting(meetingID: UUID) async throws {

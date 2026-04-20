@@ -1,10 +1,10 @@
 import Foundation
 
-protocol MeetingTranscribing {
+protocol MeetingTranscribing: Sendable {
     func transcribe(meetingID: UUID, audioURL: URL) async throws
 }
 
-final class MeetingTranscriptionService: MeetingTranscribing {
+final class MeetingTranscriptionService: MeetingTranscribing, Sendable {
     private let runner: VibeVoiceRunning
     private let store: MeetingRecordStore
 
@@ -17,13 +17,15 @@ final class MeetingTranscriptionService: MeetingTranscribing {
     }
 
     func transcribe(meetingID: UUID, audioURL: URL) async throws {
-        let result = try await runner.transcribe(audioURL: audioURL, hotwords: []) { [store] progress in
-            try? await store.updateMeetingStatus(
-                meetingID: meetingID,
-                status: .processing,
-                progress: progress.fractionCompleted,
-                transcriptPreview: progress.message
-            )
+        let result = try await RequestLogContext.$meetingID.withValue(meetingID) {
+            try await runner.transcribe(audioURL: audioURL, hotwords: []) { [store] progress in
+                try? await store.updateMeetingStatus(
+                    meetingID: meetingID,
+                    status: .processing,
+                    progress: progress.fractionCompleted,
+                    transcriptPreview: progress.message
+                )
+            }
         }
         try await store.updateTranscription(
             meetingID: meetingID,

@@ -21,7 +21,7 @@ enum VibeVoiceRunnerError: LocalizedError {
     }
 }
 
-protocol VibeVoiceRunning {
+protocol VibeVoiceRunning: Sendable {
     func transcribe(
         audioURL: URL,
         hotwords: [String],
@@ -29,7 +29,7 @@ protocol VibeVoiceRunning {
     ) async throws -> MeetingTranscriptionResult
 }
 
-final class VibeVoiceRunnerClient: VibeVoiceRunning {
+final class VibeVoiceRunnerClient: VibeVoiceRunning, Sendable {
     private enum Timeout {
         static let request: TimeInterval = 600
     }
@@ -38,7 +38,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
     private static let maxModelContextTokens = 16384
     private static let tokenSafetyBuffer = 128
     private static let targetRequestJSONBytes = 1_500_000
-    private static let defaultChunkDuration: TimeInterval = 20 * 60
+    private static let defaultChunkDuration: TimeInterval = 5 * 60
     private static let minimumChunkDuration: TimeInterval = 10
     private static let overlapDuration: TimeInterval = 3
     private static let maximumBoundarySearchWindow: TimeInterval = 5
@@ -52,18 +52,15 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
     }
 
     private let session: URLSession
-    private let decoder: JSONDecoder
     private let configProvider: MeetingVibeVoiceConfigProviding
     private let chunkDuration: TimeInterval
 
     init(
         session: URLSession = .shared,
-        decoder: JSONDecoder = JSONDecoder(),
         configProvider: MeetingVibeVoiceConfigProviding = AppPreferences.shared,
         chunkDuration: TimeInterval = defaultChunkDuration
     ) {
         self.session = session
-        self.decoder = decoder
         self.configProvider = configProvider
         self.chunkDuration = chunkDuration
     }
@@ -324,7 +321,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
     ) throws -> [MeetingTranscriptionSegmentPayload] {
         let chunkResult = try Self.decodeResult(
             from: Data(content.utf8),
-            decoder: decoder,
+            decoder: Self.makeDecoder(),
             timeOffset: chunk.timeOffset,
             sequenceOffset: 0
         )
@@ -411,6 +408,10 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
     }
 
 #if DEBUG
+    static func defaultChunkDurationForTesting() -> TimeInterval {
+        defaultChunkDuration
+    }
+
     static func chunkTimeOffsetsForTesting(
         audioURL: URL,
         chunkDuration: TimeInterval
@@ -681,6 +682,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
             promptText: promptText,
             maxTokens: initialMaxTokens,
             temperature: config.temperature,
+            repetitionPenalty: config.repetitionPenalty,
             apiKey: config.trimmedAPIKey
         )
 
@@ -697,6 +699,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
                 promptText: promptText,
                 maxTokens: adjustment.adjustedMaxTokens,
                 temperature: config.temperature,
+                repetitionPenalty: config.repetitionPenalty,
                 apiKey: config.trimmedAPIKey
             )
 
@@ -717,6 +720,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
         promptText: String,
         maxTokens: Int,
         temperature: Double,
+        repetitionPenalty: Double,
         apiKey: String
     ) async throws -> ChatCompletionAttempt {
         let requestBody = VibeVoiceChatCompletionRequest(
@@ -735,6 +739,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
             ],
             maxTokens: maxTokens,
             temperature: temperature,
+            repetitionPenalty: repetitionPenalty,
             stream: true
         )
 
@@ -800,6 +805,7 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
         response: URLResponse,
         requestedMaxTokens: Int
     ) async throws -> ChatCompletionAttempt {
+        let decoder = Self.makeDecoder()
         var rawBody = ""
         var streamEvents: [String] = []
         var currentEventDataLines: [String] = []
@@ -885,6 +891,10 @@ final class VibeVoiceRunnerClient: VibeVoiceRunning {
         RequestLogStore.log(.asr, "Meeting ASR response <- body=\(responsePreview)")
         MeetingLog.info("VibeVoice non-sse bodyPreview=\(responsePreview)")
         return .success(try decoder.decode(VibeVoiceChatCompletionResponse.self, from: rawData))
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        JSONDecoder()
     }
 
     private static func makePromptText(contextInfo: String) -> String {
@@ -1393,6 +1403,7 @@ private struct VibeVoiceChatCompletionRequest: Encodable {
     let messages: [VibeVoiceChatMessage]
     let maxTokens: Int
     let temperature: Double
+    let repetitionPenalty: Double
     let stream: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -1400,6 +1411,7 @@ private struct VibeVoiceChatCompletionRequest: Encodable {
         case messages
         case maxTokens = "max_tokens"
         case temperature
+        case repetitionPenalty = "repetition_penalty"
         case stream
     }
 }

@@ -1,6 +1,6 @@
 import Combine
 import AppKit
-import Foundation
+@preconcurrency import Foundation
 
 enum MeetingOverlayState: Equatable {
     case hidden
@@ -88,7 +88,6 @@ final class MeetingSessionController: ObservableObject {
     private let store: MeetingRecordStore
     private let completionAlertPresenter: MeetingCompletionAlertPresenting
     private var cancellables = Set<AnyCancellable>()
-    private var recordsDidChangeObserver: NSObjectProtocol?
     private var pendingCompletionAlertMeetingID: UUID?
     private var completionAlertsShown = Set<UUID>()
 
@@ -131,13 +130,6 @@ final class MeetingSessionController: ObservableObject {
         observeRecorderState()
         observeMeetingUpdates()
     }
-
-    deinit {
-        if let recordsDidChangeObserver {
-            NotificationCenter.default.removeObserver(recordsDidChangeObserver)
-        }
-    }
-
     func present() {
         MeetingLog.info("Present meeting history page")
         isPresented = true
@@ -292,16 +284,14 @@ final class MeetingSessionController: ObservableObject {
     }
 
     private func observeMeetingUpdates() {
-        recordsDidChangeObserver = NotificationCenter.default.addObserver(
-            forName: .meetingRecordsDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                await self?.checkCompletionAlertIfNeeded()
+        NotificationCenter.default.publisher(for: .meetingRecordsDidChange)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor [weak self] in
+                    await self?.checkCompletionAlertIfNeeded()
+                }
             }
-        }
+            .store(in: &cancellables)
     }
 
     private func checkCompletionAlertIfNeeded() async {

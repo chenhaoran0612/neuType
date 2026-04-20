@@ -4,7 +4,7 @@ import CoreMedia
 import Foundation
 import ScreenCaptureKit
 
-protocol MeetingRecording: AnyObject {
+protocol MeetingRecording: AnyObject, Sendable {
     func startRecording() async throws
     func stopRecording() async throws -> URL?
     func cancelRecording()
@@ -36,7 +36,7 @@ enum MeetingRecorderError: LocalizedError {
     }
 }
 
-final class MeetingRecorder: NSObject, MeetingRecording {
+final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
     private let captureQueue = DispatchQueue(label: "ai.neuxnet.neutype.meeting.capture")
     private let stateQueue = DispatchQueue(label: "ai.neuxnet.neutype.meeting.state")
 

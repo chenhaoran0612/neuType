@@ -589,12 +589,15 @@ final class MeetingDetailViewModelTests: XCTestCase {
     func testTranscriptRequestLogsExposeMostRecentASREntries() async throws {
         RequestLogStore.shared.clear()
         RequestLogStore.shared.add(.usage, "Meeting: something else")
-        RequestLogStore.shared.add(.asr, "Meeting ASR chunk started 1 / 3")
-        RequestLogStore.shared.add(.asr, "Meeting ASR chunk timeout 2 / 3")
 
         let meeting = MeetingRecord.fixture(status: .processing)
         let store = try MeetingRecordStore.inMemory()
         try await store.insertMeeting(meeting, segments: [])
+
+        RequestLogContext.$meetingID.withValue(meeting.id) {
+            RequestLogStore.shared.add(.asr, "Meeting ASR chunk started 1 / 3")
+            RequestLogStore.shared.add(.asr, "Meeting ASR chunk timeout 2 / 3")
+        }
 
         let viewModel = MeetingDetailViewModel(
             meetingID: meeting.id,
@@ -610,6 +613,49 @@ final class MeetingDetailViewModelTests: XCTestCase {
                 "Meeting ASR chunk timeout 2 / 3",
                 "Meeting ASR chunk started 1 / 3",
             ]
+        )
+    }
+
+    @MainActor
+    func testTranscriptRequestLogsAreScopedToCurrentMeeting() async throws {
+        RequestLogStore.shared.clear()
+
+        let meetingA = MeetingRecord.fixture(status: .processing)
+        let meetingB = MeetingRecord.fixture(status: .processing)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meetingA, segments: [])
+        try await store.insertMeeting(meetingB, segments: [])
+
+        RequestLogContext.$meetingID.withValue(meetingA.id) {
+            RequestLogStore.shared.add(.asr, "Meeting A started")
+            RequestLogStore.shared.add(.asr, "Meeting A finished")
+        }
+        RequestLogContext.$meetingID.withValue(meetingB.id) {
+            RequestLogStore.shared.add(.asr, "Meeting B started")
+            RequestLogStore.shared.add(.asr, "Meeting B finished")
+        }
+
+        let viewModelA = MeetingDetailViewModel(
+            meetingID: meetingA.id,
+            audioURL: meetingA.audioURL,
+            store: store
+        )
+        let viewModelB = MeetingDetailViewModel(
+            meetingID: meetingB.id,
+            audioURL: meetingB.audioURL,
+            store: store
+        )
+
+        try await viewModelA.load()
+        try await viewModelB.load()
+
+        XCTAssertEqual(
+            viewModelA.transcriptRequestLogs.map(\.message),
+            ["Meeting A finished", "Meeting A started"]
+        )
+        XCTAssertEqual(
+            viewModelB.transcriptRequestLogs.map(\.message),
+            ["Meeting B finished", "Meeting B started"]
         )
     }
 
@@ -688,7 +734,7 @@ private enum StubError: Error, LocalizedError {
     }
 }
 
-private final class StubMeetingTranscriber: MeetingTranscribing {
+private final class StubMeetingTranscriber: MeetingTranscribing, @unchecked Sendable {
     var transcribedMeetingIDs: [UUID] = []
     var error: Error?
     let store: MeetingRecordStore?
@@ -753,7 +799,7 @@ private extension MeetingRecord {
     }
 }
 
-private final class StubMeetingSummaryService: MeetingSummarizing {
+private final class StubMeetingSummaryService: MeetingSummarizing, @unchecked Sendable {
     var submittedMeetingIDs: [UUID] = []
     var resumedMeetingIDs: [UUID] = []
     let store: MeetingRecordStore
@@ -779,7 +825,7 @@ private final class StubMeetingSummaryService: MeetingSummarizing {
     }
 }
 
-private final class DelayedStubMeetingSummaryService: MeetingSummarizing {
+private final class DelayedStubMeetingSummaryService: MeetingSummarizing, @unchecked Sendable {
     var resumedMeetingIDs: [UUID] = []
 
     func submitMeeting(meetingID: UUID) async throws {}

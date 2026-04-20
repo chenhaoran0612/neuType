@@ -1,10 +1,10 @@
 import Foundation
 import GRDB
 
-final class MeetingRecordStore: ObservableObject {
+final class MeetingRecordStore: ObservableObject, @unchecked Sendable {
     static let shared = makeShared()
-    private(set) static var sharedBootstrapDescription = "uninitialized"
-    private(set) static var sharedBootstrapFailure: String?
+    nonisolated(unsafe) private(set) static var sharedBootstrapDescription = "uninitialized"
+    nonisolated(unsafe) private(set) static var sharedBootstrapFailure: String?
 
     private let dbQueue: DatabaseQueue
     private let databasePath: String

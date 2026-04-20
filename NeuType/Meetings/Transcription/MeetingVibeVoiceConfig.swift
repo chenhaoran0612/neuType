@@ -1,6 +1,6 @@
 import Foundation
 
-struct MeetingVibeVoiceConfig: Equatable {
+struct MeetingVibeVoiceConfig: Equatable, Sendable {
     let baseURL: String
     let apiPrefix: String
     var apiKey: String = ""
@@ -66,7 +66,7 @@ struct MeetingVibeVoiceConfig: Equatable {
     }
 }
 
-protocol MeetingVibeVoiceConfigProviding {
+protocol MeetingVibeVoiceConfigProviding: Sendable {
     var meetingVibeVoiceConfig: MeetingVibeVoiceConfig { get }
 }
 
