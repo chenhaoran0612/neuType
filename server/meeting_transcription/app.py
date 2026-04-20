@@ -1,6 +1,6 @@
 """FastAPI application scaffold for the meeting transcription service."""
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException
 
 
 def create_app() -> FastAPI:
@@ -13,12 +13,13 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @sessions_router.post("")
-    def create_session() -> dict[str, str]:
-        return {"status": "not_implemented"}
+    def create_session() -> None:
+        raise HTTPException(status_code=501, detail="Not implemented")
 
     @sessions_router.get("/{session_id}")
-    def get_session(session_id: str) -> dict[str, str]:
-        return {"session_id": session_id, "status": "not_implemented"}
+    def get_session(session_id: str) -> None:
+        del session_id
+        raise HTTPException(status_code=501, detail="Not implemented")
 
     app.include_router(sessions_router)
     return app
