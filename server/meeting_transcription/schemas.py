@@ -25,6 +25,9 @@ class Envelope(BaseModel, Generic[DataT]):
     error: APIError | None
 
 
+ErrorEnvelope = Envelope[None]
+
+
 def envelope(
     data: BaseModel | dict[str, object] | None = None,
     *,

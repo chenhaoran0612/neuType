@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from email.parser import BytesParser
-from email.policy import default
-from typing import Any
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, File, Form, Path, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -17,6 +15,7 @@ from meeting_transcription.schemas import (
     CreateSessionRequest,
     CreateSessionResponse,
     Envelope,
+    ErrorEnvelope,
     FinalizeSessionRequest,
     FinalizeSessionResponse,
     SessionStatusResponse,
@@ -43,11 +42,22 @@ def get_storage(request: Request) -> LocalArtifactStorage:
     return request.app.state.storage
 
 
+def error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    """Return an error envelope JSON response."""
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(envelope(error=APIError(code=code, message=message))),
+    )
+
+
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
     response_model=Envelope[CreateSessionResponse],
-    responses={status.HTTP_200_OK: {"model": Envelope[CreateSessionResponse]}},
+    responses={
+        status.HTTP_200_OK: {"model": Envelope[CreateSessionResponse]},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorEnvelope},
+    },
 )
 def create_session(payload: CreateSessionRequest, db: Session = Depends(get_db)):
     """Create or reuse a transcription session by client token."""
@@ -67,50 +77,30 @@ def create_session(payload: CreateSessionRequest, db: Session = Depends(get_db))
     response_model=Envelope[UploadChunkResponse],
     responses={
         status.HTTP_200_OK: {"model": Envelope[UploadChunkResponse]},
-        status.HTTP_404_NOT_FOUND: {"description": "Session not found"},
-        status.HTTP_409_CONFLICT: {"description": "Chunk hash conflict"},
+        status.HTTP_400_BAD_REQUEST: {"model": ErrorEnvelope},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope},
+        status.HTTP_409_CONFLICT: {"model": ErrorEnvelope},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorEnvelope},
     },
 )
 async def upload_chunk(
     session_id: str,
-    chunk_index: int,
-    request: Request,
+    chunk_index: Annotated[int, Path(ge=0)],
+    audio_file: Annotated[UploadFile, File(...)],
+    start_ms: Annotated[int, Form(ge=0)],
+    end_ms: Annotated[int, Form(gt=0)],
+    sha256: Annotated[str, Form(min_length=1)],
+    mime_type: Annotated[str, Form(min_length=1)],
+    file_size_bytes: Annotated[int, Form(ge=0)],
     db: Session = Depends(get_db),
     storage: LocalArtifactStorage = Depends(get_storage),
 ):
     """Upload a live chunk with idempotent dedupe and hash conflict detection."""
-    try:
-        form_data = await _parse_multipart_form(request)
-        audio_part = form_data["audio_file"]
-        start_ms = int(form_data["start_ms"])
-        end_ms = int(form_data["end_ms"])
-        sha256 = str(form_data["sha256"])
-        mime_type = str(form_data["mime_type"])
-        file_size_bytes = int(form_data["file_size_bytes"])
-    except (KeyError, TypeError, ValueError):
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(
-                        code="invalid_multipart_payload",
-                        message="multipart upload payload is invalid",
-                    )
-                )
-            ),
-        )
-
     if end_ms <= start_ms:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(
-                        code="invalid_chunk_range",
-                        message="end_ms must be greater than start_ms",
-                    )
-                )
-            ),
+        return error_response(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_chunk_range",
+            "end_ms must be greater than start_ms",
         )
 
     try:
@@ -124,29 +114,22 @@ async def upload_chunk(
             sha256=sha256,
             mime_type=mime_type,
             file_size_bytes=file_size_bytes,
-            filename=str(audio_part["filename"]) or f"{chunk_index}.bin",
-            audio_bytes=bytes(audio_part["content"]),
+            filename=audio_file.filename or f"{chunk_index}.bin",
+            audio_bytes=await audio_file.read(),
         )
+    except repositories.InvalidChunkMetadataError as exc:
+        return error_response(status.HTTP_400_BAD_REQUEST, exc.code, exc.message)
     except repositories.SessionNotFoundError:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(
-                        code="session_not_found",
-                        message=f"session {session_id} does not exist",
-                    )
-                )
-            ),
+        return error_response(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"session {session_id} does not exist",
         )
     except repositories.ChunkHashConflictError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(code="chunk_hash_conflict", message=str(exc))
-                )
-            ),
+        return error_response(
+            status.HTTP_409_CONFLICT,
+            "chunk_hash_conflict",
+            str(exc),
         )
 
     status_code = status.HTTP_200_OK if stored_chunk.reused else status.HTTP_201_CREATED
@@ -159,7 +142,10 @@ async def upload_chunk(
 @router.post(
     "/{session_id}/finalize",
     response_model=Envelope[FinalizeSessionResponse],
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Session not found"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorEnvelope},
+    },
 )
 def finalize_session(
     session_id: str,
@@ -170,16 +156,10 @@ def finalize_session(
     try:
         finalized = repositories.finalize_session(db, session_id, payload)
     except repositories.SessionNotFoundError:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(
-                        code="session_not_found",
-                        message=f"session {session_id} does not exist",
-                    )
-                )
-            ),
+        return error_response(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"session {session_id} does not exist",
         )
 
     return JSONResponse(content=jsonable_encoder(envelope(finalized)))
@@ -188,57 +168,20 @@ def finalize_session(
 @router.get(
     "/{session_id}",
     response_model=Envelope[SessionStatusResponse],
-    responses={status.HTTP_404_NOT_FOUND: {"description": "Session not found"}},
+    responses={
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorEnvelope},
+    },
 )
 def get_session(session_id: str, db: Session = Depends(get_db)):
     """Return current session status."""
     try:
         session_status = repositories.get_session_status(db, session_id)
     except repositories.SessionNotFoundError:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content=jsonable_encoder(
-                envelope(
-                    error=APIError(
-                        code="session_not_found",
-                        message=f"session {session_id} does not exist",
-                    )
-                )
-            ),
+        return error_response(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"session {session_id} does not exist",
         )
 
     return JSONResponse(content=jsonable_encoder(envelope(session_status)))
-
-
-async def _parse_multipart_form(request: Request) -> dict[str, Any]:
-    """Parse a multipart request body without python-multipart."""
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" not in content_type:
-        raise ValueError("Expected multipart/form-data payload")
-
-    body = await request.body()
-    message = BytesParser(policy=default).parsebytes(
-        (
-            f"Content-Type: {content_type}\r\n"
-            "MIME-Version: 1.0\r\n"
-            "\r\n"
-        ).encode("utf-8")
-        + body
-    )
-    if not message.is_multipart():
-        raise ValueError("Payload is not multipart")
-
-    parsed: dict[str, Any] = {}
-    for part in message.iter_parts():
-        field_name = part.get_param("name", header="content-disposition")
-        if field_name is None:
-            continue
-
-        filename = part.get_filename()
-        payload = part.get_payload(decode=True) or b""
-        if filename is None:
-            parsed[field_name] = payload.decode("utf-8")
-        else:
-            parsed[field_name] = {"filename": filename, "content": payload}
-
-    return parsed

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 from io import BytesIO
 import os
 from pathlib import Path
@@ -8,8 +9,10 @@ import subprocess
 from fastapi.testclient import TestClient
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
+from meeting_transcription import repositories
 from meeting_transcription.models import Base, SessionChunk, TranscriptionSession
 from meeting_transcription.storage import LocalArtifactStorage
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from uuid import uuid4
 
@@ -39,13 +42,18 @@ def test_session_routes_advertise_api_contract_responses(client):
     upload_chunk_responses = paths[
         "/api/meeting-transcription/sessions/{session_id}/chunks/{chunk_index}"
     ]["put"]["responses"]
+    upload_chunk_request_body = paths[
+        "/api/meeting-transcription/sessions/{session_id}/chunks/{chunk_index}"
+    ]["put"].get("requestBody", {})
 
     assert "201" in create_session_responses
     assert "200" in create_session_responses
     assert "200" in get_session_responses
     assert "201" in upload_chunk_responses
     assert "200" in upload_chunk_responses
+    assert "400" in upload_chunk_responses
     assert "409" in upload_chunk_responses
+    assert "multipart/form-data" in upload_chunk_request_body["content"]
 
 
 @pytest.fixture
@@ -99,6 +107,14 @@ def wav_file():
     return BytesIO(b"RIFFtestWAVEfmt " + (b"\x00" * 120))
 
 
+def _wav_bytes(tag: bytes = b"") -> bytes:
+    return b"RIFFtestWAVEfmt " + tag + (b"\x00" * 120)
+
+
+def _sha256(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
 def test_create_session_is_idempotent(client):
     payload = {
         "client_session_token": "token-1",
@@ -118,33 +134,239 @@ def test_create_session_is_idempotent(client):
     assert first.json()["data"]["session_id"] == second.json()["data"]["session_id"]
 
 
-def test_chunk_upload_rejects_same_index_different_hash(client, created_session, wav_file):
+def test_chunk_upload_returns_200_when_same_bytes_are_replayed(client, created_session):
+    payload = _wav_bytes(b"same")
+    digest = _sha256(payload)
+
     first = client.put(
         f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
-        files={"audio_file": ("chunk.wav", wav_file, "audio/wav")},
+        files={"audio_file": ("chunk.wav", BytesIO(payload), "audio/wav")},
         data={
             "start_ms": 0,
             "end_ms": 300000,
-            "sha256": "hash-a",
+            "sha256": digest,
             "mime_type": "audio/wav",
-            "file_size_bytes": 128,
+            "file_size_bytes": len(payload),
         },
     )
-    wav_file.seek(0)
     second = client.put(
         f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
-        files={"audio_file": ("chunk.wav", wav_file, "audio/wav")},
+        files={"audio_file": ("chunk.wav", BytesIO(payload), "audio/wav")},
         data={
             "start_ms": 0,
             "end_ms": 300000,
-            "sha256": "hash-b",
+            "sha256": digest,
             "mime_type": "audio/wav",
-            "file_size_bytes": 128,
+            "file_size_bytes": len(payload),
+        },
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["data"]["chunk_index"] == second.json()["data"]["chunk_index"]
+
+
+def test_chunk_upload_rejects_same_index_different_bytes(client, created_session):
+    first_payload = _wav_bytes(b"first")
+    second_payload = _wav_bytes(b"second")
+    first_digest = _sha256(first_payload)
+    second_digest = _sha256(second_payload)
+
+    first = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
+        files={"audio_file": ("chunk.wav", BytesIO(first_payload), "audio/wav")},
+        data={
+            "start_ms": 0,
+            "end_ms": 300000,
+            "sha256": first_digest,
+            "mime_type": "audio/wav",
+            "file_size_bytes": len(first_payload),
+        },
+    )
+    second = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
+        files={"audio_file": ("chunk.wav", BytesIO(second_payload), "audio/wav")},
+        data={
+            "start_ms": 0,
+            "end_ms": 300000,
+            "sha256": second_digest,
+            "mime_type": "audio/wav",
+            "file_size_bytes": len(second_payload),
         },
     )
 
     assert first.status_code == 201
     assert second.status_code == 409
+    assert second.json()["error"]["code"] == "chunk_hash_conflict"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_code"),
+    [
+        ({"sha256": "not-the-real-hash"}, "chunk_sha256_mismatch"),
+        ({"file_size_bytes": 1}, "chunk_size_mismatch"),
+    ],
+)
+def test_chunk_upload_rejects_mismatched_client_hash_or_size(
+    client, created_session, overrides, expected_code
+):
+    payload = _wav_bytes(b"mismatch")
+    digest = _sha256(payload)
+    data = {
+        "start_ms": 0,
+        "end_ms": 300000,
+        "sha256": digest,
+        "mime_type": "audio/wav",
+        "file_size_bytes": len(payload),
+    }
+    data.update(overrides)
+
+    response = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
+        files={"audio_file": ("chunk.wav", BytesIO(payload), "audio/wav")},
+        data=data,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == expected_code
+
+
+def test_finalize_selected_input_mode_matches_persisted_session_state(client, created_session):
+    response = client.post(
+        f"/api/meeting-transcription/sessions/{created_session}/finalize",
+        json={
+            "expected_chunk_count": 2,
+            "preferred_input_mode": "full_audio_fallback",
+            "allow_full_audio_fallback": True,
+        },
+    )
+    status_response = client.get(f"/api/meeting-transcription/sessions/{created_session}")
+
+    assert response.status_code == 200
+    assert status_response.status_code == 200
+    assert response.json()["data"]["status"] == "awaiting_finalize"
+    assert response.json()["data"]["selected_input_mode"] == "live_chunks"
+    assert status_response.json()["data"]["input_mode"] == "live_chunks"
+
+
+@pytest.mark.parametrize(
+    ("path_chunk_index", "start_ms", "expected_code"),
+    [
+        (-1, 0, "validation_error"),
+        (0, -1, "validation_error"),
+    ],
+)
+def test_chunk_upload_rejects_negative_chunk_index_or_start_ms(
+    client, created_session, path_chunk_index, start_ms, expected_code
+):
+    payload = _wav_bytes(b"negative")
+    digest = _sha256(payload)
+
+    response = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/{path_chunk_index}",
+        files={"audio_file": ("chunk.wav", BytesIO(payload), "audio/wav")},
+        data={
+            "start_ms": start_ms,
+            "end_ms": 300000,
+            "sha256": digest,
+            "mime_type": "audio/wav",
+            "file_size_bytes": len(payload),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == expected_code
+
+
+def test_store_live_chunk_recovers_from_integrity_error_for_same_content(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "meeting-transcription-race.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = LocalArtifactStorage(tmp_path / "artifacts")
+    payload = _wav_bytes(b"race")
+    digest = _sha256(payload)
+
+    setup_session = session_factory()
+    transcription_session = TranscriptionSession(
+        session_id="mts_race",
+        client_session_token="race-token",
+        status="created",
+        input_mode="live_chunks",
+        chunk_duration_ms=300000,
+        chunk_overlap_ms=2500,
+    )
+    setup_session.add(transcription_session)
+    setup_session.commit()
+    setup_session.refresh(transcription_session)
+    setup_session.close()
+
+    db = session_factory()
+    original_commit = db.commit
+    triggered = False
+    write_calls = 0
+
+    def track_write_bytes(logical_path: str, audio_bytes: bytes):
+        nonlocal write_calls
+        write_calls += 1
+        return storage.resolve(logical_path)
+
+    monkeypatch.setattr(storage, "write_bytes", track_write_bytes)
+
+    def race_commit():
+        nonlocal triggered
+        if triggered:
+            return original_commit()
+
+        triggered = True
+        competing = session_factory()
+        competing_session = competing.scalar(
+            select(TranscriptionSession).where(
+                TranscriptionSession.session_id == "mts_race"
+            )
+        )
+        competing.add(
+            SessionChunk(
+                session_id=competing_session.id,
+                chunk_index=0,
+                source_type="live_chunk",
+                start_ms=0,
+                end_ms=300000,
+                duration_ms=300000,
+                sha256=digest,
+                storage_path="sessions/mts_race/live-chunks/0.wav",
+                upload_status="uploaded",
+                process_status="pending",
+            )
+        )
+        competing.commit()
+        competing.close()
+        raise IntegrityError("INSERT", {}, Exception("duplicate"))
+
+    monkeypatch.setattr(db, "commit", race_commit)
+
+    result = repositories.store_live_chunk(
+        db,
+        storage=storage,
+        public_session_id="mts_race",
+        chunk_index=0,
+        start_ms=0,
+        end_ms=300000,
+        sha256=digest,
+        mime_type="audio/wav",
+        file_size_bytes=len(payload),
+        filename="chunk.wav",
+        audio_bytes=payload,
+    )
+
+    assert result.reused is True
+    assert result.chunk.sha256 == digest
+    assert write_calls == 0
+
+    db.close()
+    engine.dispose()
 
 
 def test_schema_persists_session_and_chunk(db_session):

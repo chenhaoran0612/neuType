@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +31,15 @@ class SessionNotFoundError(Exception):
 
 class ChunkHashConflictError(Exception):
     """Raised when a live chunk index already exists with a different hash."""
+
+
+class InvalidChunkMetadataError(Exception):
+    """Raised when client-supplied chunk metadata mismatches the uploaded bytes."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 @dataclass(slots=True)
@@ -115,12 +125,25 @@ def store_live_chunk(
     audio_bytes: bytes,
 ) -> ChunkRecord:
     """Persist a live chunk upload with idempotent conflict handling."""
-    del mime_type, file_size_bytes
+    del mime_type
+
+    actual_sha256 = hashlib.sha256(audio_bytes).hexdigest()
+    actual_file_size = len(audio_bytes)
+    if sha256 != actual_sha256:
+        raise InvalidChunkMetadataError(
+            "chunk_sha256_mismatch",
+            "client sha256 does not match uploaded audio bytes",
+        )
+    if file_size_bytes != actual_file_size:
+        raise InvalidChunkMetadataError(
+            "chunk_size_mismatch",
+            "client file_size_bytes does not match uploaded audio bytes",
+        )
 
     session = _get_session_by_public_id(db, public_session_id)
     existing = db.scalar(_live_chunk_select(session, chunk_index))
     if existing is not None:
-        if existing.sha256 != sha256:
+        if existing.sha256 != actual_sha256:
             raise ChunkHashConflictError(
                 f"chunk {chunk_index} already exists with a different sha256"
             )
@@ -130,7 +153,6 @@ def store_live_chunk(
     storage_path = storage.session_path(
         session.session_id, "live-chunks", f"{chunk_index}{suffix}"
     )
-    storage.write_bytes(storage_path, audio_bytes)
 
     chunk = SessionChunk(
         session_id=session.id,
@@ -139,7 +161,7 @@ def store_live_chunk(
         start_ms=start_ms,
         end_ms=end_ms,
         duration_ms=end_ms - start_ms,
-        sha256=sha256,
+        sha256=actual_sha256,
         storage_path=storage_path,
         upload_status="uploaded",
         process_status="pending",
@@ -147,7 +169,26 @@ def store_live_chunk(
     session.status = "receiving_chunks"
 
     db.add(chunk)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(_live_chunk_select(session, chunk_index))
+        if existing is None:
+            raise
+        if existing.sha256 != actual_sha256:
+            raise ChunkHashConflictError(
+                f"chunk {chunk_index} already exists with a different sha256"
+            )
+        return ChunkRecord(session=session, chunk=existing, reused=True)
+
+    try:
+        storage.write_bytes(storage_path, audio_bytes)
+    except Exception:
+        db.delete(chunk)
+        db.commit()
+        raise
+
     db.refresh(session)
     db.refresh(chunk)
     return ChunkRecord(session=session, chunk=chunk, reused=False)
@@ -208,7 +249,7 @@ def finalize_session(
     return FinalizeSessionResponse(
         session_id=session.session_id,
         status=session.status,
-        selected_input_mode=payload.preferred_input_mode,
+        selected_input_mode=session.input_mode,
         missing_chunk_indexes=missing_chunk_indexes,
     )
 

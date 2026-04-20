@@ -6,11 +6,15 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_transcription.db import create_engine, create_session_factory
 from meeting_transcription.models import Base
 from meeting_transcription.routes import router as sessions_router
+from meeting_transcription.schemas import APIError, envelope
 from meeting_transcription.storage import LocalArtifactStorage
 
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./meeting_transcription.db"
@@ -41,6 +45,22 @@ def create_app(
 
     app.state.session_factory = session_factory
     app.state.storage = storage
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc: RequestValidationError):
+        del request
+        del exc
+        return JSONResponse(
+            status_code=422,
+            content=jsonable_encoder(
+                envelope(
+                    error=APIError(
+                        code="validation_error",
+                        message="request validation failed",
+                    )
+                )
+            ),
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
