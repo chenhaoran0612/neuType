@@ -1,0 +1,90 @@
+"""ORM models for meeting transcription persistence."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from meeting_transcription.db import Base
+
+
+def utcnow() -> datetime:
+    """Return a timezone-aware timestamp in UTC."""
+    return datetime.now(timezone.utc)
+
+
+class TranscriptionSession(Base):
+    """Represents one server-side meeting transcription session."""
+
+    __tablename__ = "transcription_sessions"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    session_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    client_session_token: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_overlap_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    final_audio_uploaded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    final_audio_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    chunks: Mapped[list["SessionChunk"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionChunk.chunk_index",
+    )
+
+
+class SessionChunk(Base):
+    """Represents an uploaded or derived audio chunk for a session."""
+
+    __tablename__ = "session_chunks"
+    __table_args__ = (
+        UniqueConstraint("session_id", "chunk_index", name="uq_session_chunks_session_id_chunk_index"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("transcription_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(128), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    upload_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    process_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result_segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    session: Mapped[TranscriptionSession] = relationship(back_populates="chunks")
+
+
+__all__ = ["Base", "SessionChunk", "TranscriptionSession"]
