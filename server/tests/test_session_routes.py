@@ -1,10 +1,4 @@
-from pathlib import Path
-import sys
-
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 from meeting_transcription.app import create_app
 
 
