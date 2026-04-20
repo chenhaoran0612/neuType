@@ -71,10 +71,19 @@ class TranscriptionSession(Base):
     chunk_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_overlap_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     expected_chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selected_final_input_mode: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     final_audio_uploaded: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
     final_audio_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    final_audio_storage_path: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )
+    last_committed_chunk_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=-1, server_default=text("-1")
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

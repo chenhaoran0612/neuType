@@ -22,6 +22,7 @@ def upgrade() -> None:
         sa.Column("chunk_duration_ms", sa.Integer(), nullable=False),
         sa.Column("chunk_overlap_ms", sa.Integer(), nullable=False),
         sa.Column("expected_chunk_count", sa.Integer(), nullable=True),
+        sa.Column("selected_final_input_mode", sa.String(length=64), nullable=True),
         sa.Column(
             "final_audio_uploaded",
             sa.Boolean(),
@@ -29,6 +30,13 @@ def upgrade() -> None:
             server_default=sa.false(),
         ),
         sa.Column("final_audio_sha256", sa.String(length=128), nullable=True),
+        sa.Column("final_audio_storage_path", sa.String(length=512), nullable=True),
+        sa.Column(
+            "last_committed_chunk_index",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("-1"),
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
