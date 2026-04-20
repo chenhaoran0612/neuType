@@ -416,13 +416,12 @@ def recover_stale_processing_chunks(db: Session) -> bool:
         started_at = chunk.processing_started_at
         if started_at is not None and started_at > cutoff:
             continue
-        chunk.process_status = CHUNK_PROCESS_PENDING
-        chunk.processing_started_at = None
-        chunk.error_message = chunk.error_message or "recovered stale processing chunk"
+        reset_chunk_after_processing_failure(
+            db,
+            chunk,
+            error_message=chunk.error_message or "recovered stale processing chunk",
+        )
         recovered = True
-
-    if recovered:
-        db.commit()
     return recovered
 
 
@@ -431,6 +430,18 @@ def mark_session_failed(db: Session, session: TranscriptionSession, *, error_mes
     session.last_error = error_message
     db.commit()
     db.refresh(session)
+
+
+def delete_fallback_chunks_for_session(db: Session, session: TranscriptionSession) -> None:
+    fallback_chunks = db.scalars(
+        select(SessionChunk).where(
+            SessionChunk.session_id == session.id,
+            SessionChunk.source_type == FALLBACK_SPLIT_SOURCE_TYPE,
+        )
+    ).all()
+    for chunk in fallback_chunks:
+        db.delete(chunk)
+    db.flush()
 
 
 def advance_commit_frontier(db: Session) -> bool:

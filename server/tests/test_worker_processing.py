@@ -276,6 +276,22 @@ class WorkerHarness:
         finally:
             db.close()
 
+    def set_chunk_retry_count(
+        self,
+        public_session_id: str,
+        chunk_index: int,
+        retry_count: int,
+        *,
+        source_type: str = "live_chunk",
+    ) -> None:
+        db = self.session_factory()
+        try:
+            chunk = self._fetch_chunk(db, public_session_id, chunk_index, source_type)
+            chunk.retry_count = retry_count
+            db.commit()
+        finally:
+            db.close()
+
     @staticmethod
     def _wav_bytes(tag: bytes) -> bytes:
         return b"RIFFtestWAVEfmt " + tag + (b"\x00" * 64)
@@ -591,3 +607,53 @@ def test_zero_duration_fallback_audio_marks_session_failed(
     refreshed = worker_harness.fetch_session(session.session_id)
     assert refreshed.status == "failed"
     assert "zero chunks" in (refreshed.last_error or "").lower()
+
+
+def test_partial_fallback_materialization_rolls_back_partial_chunks(
+    worker_harness: WorkerHarness, full_audio_file: Path, monkeypatch
+):
+    session = worker_harness.seed_session_with_missing_live_chunks()
+    worker_harness.attach_full_audio(session, full_audio_file)
+    worker_harness.finalize(session.session_id)
+
+    original_write_bytes = worker_harness.storage.write_bytes
+    calls = 0
+
+    def fail_on_second_fallback_write(logical_path: str, payload: bytes):
+        nonlocal calls
+        if "fallback-split-chunks" in logical_path:
+            calls += 1
+            if calls == 2:
+                raise OSError("simulated fallback storage failure")
+        return original_write_bytes(logical_path, payload)
+
+    monkeypatch.setattr(worker_harness.storage, "write_bytes", fail_on_second_fallback_write)
+
+    assert worker_harness.run_once() is True
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    fallback_chunks = worker_harness.list_chunks(
+        session.session_id, "server_split_from_full_audio"
+    )
+    assert refreshed.status == "failed"
+    assert fallback_chunks == []
+    assert "fallback wav materialization failed" in (refreshed.last_error or "")
+
+
+def test_stale_recovery_consumes_retry_budget_and_can_fail_session(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+    worker_harness.set_chunk_retry_count(session.session_id, 0, 2)
+    worker_harness.mark_chunk_processing_state(
+        session.session_id, 0, started_at_offset_seconds=301
+    )
+
+    assert worker_harness.run_once() is True
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert refreshed.status == "failed"
+    assert chunk.process_status == "failed"
+    assert chunk.retry_count == 3
+    assert "recovered stale processing chunk" in (chunk.error_message or "")

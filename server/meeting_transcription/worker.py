@@ -97,8 +97,13 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
                 )
             db.commit()
         except Exception as exc:
+            session_id = session.id
+            db.rollback()
+            reloaded_session = db.get(TranscriptionSession, session_id)
             repositories.mark_session_failed(
-                db, session, error_message=f"fallback wav materialization failed: {exc}"
+                db,
+                reloaded_session,
+                error_message=f"fallback wav materialization failed: {exc}",
             )
         return True
 
