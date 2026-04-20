@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import sqlite3
 import subprocess
+import sys
 from fastapi.testclient import TestClient
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
@@ -306,14 +307,6 @@ def test_store_live_chunk_recovers_from_integrity_error_for_same_content(
     db = session_factory()
     original_commit = db.commit
     triggered = False
-    write_calls = 0
-
-    def track_write_bytes(logical_path: str, audio_bytes: bytes):
-        nonlocal write_calls
-        write_calls += 1
-        return storage.resolve(logical_path)
-
-    monkeypatch.setattr(storage, "write_bytes", track_write_bytes)
 
     def race_commit():
         nonlocal triggered
@@ -361,9 +354,131 @@ def test_store_live_chunk_recovers_from_integrity_error_for_same_content(
         audio_bytes=payload,
     )
 
-    assert result.reused is True
+    assert result.reused is False
     assert result.chunk.sha256 == digest
-    assert write_calls == 0
+    assert storage.exists("sessions/mts_race/live-chunks/0.wav")
+
+    db.refresh(result.session)
+    assert result.session.status == "receiving_chunks"
+
+    db.close()
+    engine.dispose()
+
+
+def test_chunk_retry_repairs_missing_artifact_instead_of_returning_reused(client, tmp_path):
+    payload = _wav_bytes(b"repair")
+    digest = _sha256(payload)
+
+    create_response = client.post(
+        "/api/meeting-transcription/sessions",
+        json={
+            "client_session_token": "repair-token",
+            "source": "neutype-macos",
+            "chunk_duration_ms": 300000,
+            "chunk_overlap_ms": 2500,
+            "audio_format": "wav",
+            "sample_rate_hz": 16000,
+            "channel_count": 1,
+        },
+    )
+    session_id = create_response.json()["data"]["session_id"]
+
+    session_factory = client.app.state.session_factory
+    db = session_factory()
+    session = db.scalar(
+        select(TranscriptionSession).where(TranscriptionSession.session_id == session_id)
+    )
+    db.add(
+        SessionChunk(
+            session_id=session.id,
+            chunk_index=0,
+            source_type="live_chunk",
+            start_ms=0,
+            end_ms=300000,
+            duration_ms=300000,
+            sha256=digest,
+            storage_path=f"sessions/{session_id}/live-chunks/0.wav",
+            upload_status="uploaded",
+            process_status="pending",
+        )
+    )
+    session.status = "receiving_chunks"
+    db.commit()
+    db.close()
+
+    response = client.put(
+        f"/api/meeting-transcription/sessions/{session_id}/chunks/0",
+        files={"audio_file": ("chunk.wav", BytesIO(payload), "audio/wav")},
+        data={
+            "start_ms": 0,
+            "end_ms": 300000,
+            "sha256": digest,
+            "mime_type": "audio/wav",
+            "file_size_bytes": len(payload),
+        },
+    )
+
+    assert response.status_code == 201
+    assert client.app.state.storage.exists(f"sessions/{session_id}/live-chunks/0.wav")
+
+
+def test_store_live_chunk_storage_failure_rolls_back_chunk_and_session_state(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "meeting-transcription-storage-failure.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = LocalArtifactStorage(tmp_path / "artifacts")
+    payload = _wav_bytes(b"fail-write")
+    digest = _sha256(payload)
+
+    setup_session = session_factory()
+    transcription_session = TranscriptionSession(
+        session_id="mts_storage_fail",
+        client_session_token="storage-fail-token",
+        status="created",
+        input_mode="live_chunks",
+        chunk_duration_ms=300000,
+        chunk_overlap_ms=2500,
+    )
+    setup_session.add(transcription_session)
+    setup_session.commit()
+    setup_session.close()
+
+    def fail_write_bytes(logical_path: str, payload_bytes: bytes):
+        del logical_path, payload_bytes
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage, "write_bytes", fail_write_bytes)
+
+    db = session_factory()
+    with pytest.raises(OSError):
+        repositories.store_live_chunk(
+            db,
+            storage=storage,
+            public_session_id="mts_storage_fail",
+            chunk_index=0,
+            start_ms=0,
+            end_ms=300000,
+            sha256=digest,
+            mime_type="audio/wav",
+            file_size_bytes=len(payload),
+            filename="chunk.wav",
+            audio_bytes=payload,
+        )
+
+    reloaded_session = db.scalar(
+        select(TranscriptionSession).where(
+            TranscriptionSession.session_id == "mts_storage_fail"
+        )
+    )
+    chunks = db.scalars(
+        select(SessionChunk).where(SessionChunk.session_id == reloaded_session.id)
+    ).all()
+
+    assert reloaded_session.status == "created"
+    assert chunks == []
 
     db.close()
     engine.dispose()
@@ -562,7 +677,7 @@ def test_alembic_upgrade_stamps_revision_on_fresh_sqlite_db(tmp_path):
     database_path = tmp_path / "migration-smoke.db"
 
     completed = subprocess.run(
-        ["python", "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=server_dir,
         env={
             **os.environ,

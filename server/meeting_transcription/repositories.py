@@ -23,6 +23,8 @@ from meeting_transcription.schemas import (
 from meeting_transcription.storage import LocalArtifactStorage
 
 LIVE_CHUNK_SOURCE_TYPE = "live_chunk"
+UPLOAD_STATUS_PENDING = "pending_upload"
+UPLOAD_STATUS_UPLOADED = "uploaded"
 
 
 class SessionNotFoundError(Exception):
@@ -143,11 +145,15 @@ def store_live_chunk(
     session = _get_session_by_public_id(db, public_session_id)
     existing = db.scalar(_live_chunk_select(session, chunk_index))
     if existing is not None:
-        if existing.sha256 != actual_sha256:
-            raise ChunkHashConflictError(
-                f"chunk {chunk_index} already exists with a different sha256"
-            )
-        return ChunkRecord(session=session, chunk=existing, reused=True)
+        return _handle_existing_live_chunk(
+            db=db,
+            storage=storage,
+            session=session,
+            chunk=existing,
+            chunk_index=chunk_index,
+            actual_sha256=actual_sha256,
+            audio_bytes=audio_bytes,
+        )
 
     suffix = Path(filename).suffix or ".bin"
     storage_path = storage.session_path(
@@ -163,10 +169,9 @@ def store_live_chunk(
         duration_ms=end_ms - start_ms,
         sha256=actual_sha256,
         storage_path=storage_path,
-        upload_status="uploaded",
+        upload_status=UPLOAD_STATUS_PENDING,
         process_status="pending",
     )
-    session.status = "receiving_chunks"
 
     db.add(chunk)
     try:
@@ -176,19 +181,25 @@ def store_live_chunk(
         existing = db.scalar(_live_chunk_select(session, chunk_index))
         if existing is None:
             raise
-        if existing.sha256 != actual_sha256:
-            raise ChunkHashConflictError(
-                f"chunk {chunk_index} already exists with a different sha256"
-            )
-        return ChunkRecord(session=session, chunk=existing, reused=True)
+        return _handle_existing_live_chunk(
+            db=db,
+            storage=storage,
+            session=session,
+            chunk=existing,
+            chunk_index=chunk_index,
+            actual_sha256=actual_sha256,
+            audio_bytes=audio_bytes,
+        )
 
     try:
         storage.write_bytes(storage_path, audio_bytes)
     except Exception:
-        db.delete(chunk)
-        db.commit()
+        _delete_chunk_and_restore_session_state(db=db, session=session, chunk=chunk)
         raise
 
+    chunk.upload_status = UPLOAD_STATUS_UPLOADED
+    session.status = "receiving_chunks"
+    db.commit()
     db.refresh(session)
     db.refresh(chunk)
     return ChunkRecord(session=session, chunk=chunk, reused=False)
@@ -202,7 +213,7 @@ def get_session_status(db: Session, public_session_id: str) -> SessionStatusResp
             chunk
             for chunk in session.chunks
             if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE
-            and chunk.upload_status == "uploaded"
+            and chunk.upload_status == UPLOAD_STATUS_UPLOADED
         ]
     )
     return SessionStatusResponse(
@@ -227,7 +238,7 @@ def finalize_session(
         chunk.chunk_index
         for chunk in session.chunks
         if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE
-        and chunk.upload_status == "uploaded"
+        and chunk.upload_status == UPLOAD_STATUS_UPLOADED
     }
     expected_count = payload.expected_chunk_count
     missing_chunk_indexes: list[int] = []
@@ -275,3 +286,62 @@ def _live_chunk_select(
         SessionChunk.chunk_index == chunk_index,
         SessionChunk.source_type == LIVE_CHUNK_SOURCE_TYPE,
     )
+
+
+def _handle_existing_live_chunk(
+    *,
+    db: Session,
+    storage: LocalArtifactStorage,
+    session: TranscriptionSession,
+    chunk: SessionChunk,
+    chunk_index: int,
+    actual_sha256: str,
+    audio_bytes: bytes,
+) -> ChunkRecord:
+    if chunk.sha256 != actual_sha256:
+        raise ChunkHashConflictError(
+            f"chunk {chunk_index} already exists with a different sha256"
+        )
+
+    if chunk.upload_status == UPLOAD_STATUS_UPLOADED and storage.exists(
+        chunk.storage_path
+    ):
+        return ChunkRecord(session=session, chunk=chunk, reused=True)
+
+    try:
+        storage.write_bytes(chunk.storage_path, audio_bytes)
+    except Exception:
+        _delete_chunk_and_restore_session_state(db=db, session=session, chunk=chunk)
+        raise
+
+    chunk.upload_status = UPLOAD_STATUS_UPLOADED
+    session.status = "receiving_chunks"
+    db.commit()
+    db.refresh(session)
+    db.refresh(chunk)
+    return ChunkRecord(session=session, chunk=chunk, reused=False)
+
+
+def _delete_chunk_and_restore_session_state(
+    *, db: Session, session: TranscriptionSession, chunk: SessionChunk
+) -> None:
+    if db.get(SessionChunk, chunk.id) is not None:
+        db.delete(chunk)
+        db.flush()
+
+    session.status = (
+        "receiving_chunks" if _session_has_uploaded_live_chunks(db, session.id) else "created"
+    )
+    db.commit()
+    db.refresh(session)
+
+
+def _session_has_uploaded_live_chunks(db: Session, session_id) -> bool:
+    uploaded_chunk = db.scalar(
+        select(SessionChunk.id).where(
+            SessionChunk.session_id == session_id,
+            SessionChunk.source_type == LIVE_CHUNK_SOURCE_TYPE,
+            SessionChunk.upload_status == UPLOAD_STATUS_UPLOADED,
+        )
+    )
+    return uploaded_chunk is not None
