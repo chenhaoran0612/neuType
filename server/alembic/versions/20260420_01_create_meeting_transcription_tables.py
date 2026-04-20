@@ -91,7 +91,8 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "session_id",
             "chunk_index",
-            name="uq_session_chunks_session_id_chunk_index",
+            "source_type",
+            name="uq_session_chunks_session_id_chunk_index_source_type",
         ),
     )
 

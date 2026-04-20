@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    false,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from meeting_transcription.db import Base
@@ -32,14 +43,21 @@ class TranscriptionSession(Base):
     chunk_overlap_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     expected_chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     final_audio_uploaded: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+        Boolean, nullable=False, default=False, server_default=false()
     )
     final_audio_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     finalized_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -58,7 +76,12 @@ class SessionChunk(Base):
 
     __tablename__ = "session_chunks"
     __table_args__ = (
-        UniqueConstraint("session_id", "chunk_index", name="uq_session_chunks_session_id_chunk_index"),
+        UniqueConstraint(
+            "session_id",
+            "chunk_index",
+            "source_type",
+            name="uq_session_chunks_session_id_chunk_index_source_type",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -78,10 +101,17 @@ class SessionChunk(Base):
     result_segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
     session: Mapped[TranscriptionSession] = relationship(back_populates="chunks")

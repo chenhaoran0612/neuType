@@ -3,6 +3,9 @@ import pytest
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
 from meeting_transcription.models import Base, SessionChunk, TranscriptionSession
+from meeting_transcription.storage import LocalArtifactStorage
+from sqlalchemy.exc import IntegrityError
+from uuid import uuid4
 
 
 def test_health_route_and_session_routes_exist():
@@ -78,3 +81,75 @@ def test_schema_persists_session_and_chunk(db_session):
     db_session.commit()
 
     assert chunk.id is not None
+
+
+def test_schema_allows_same_chunk_index_for_different_source_types(db_session):
+    session = TranscriptionSession(
+        session_id="mts_test_sources",
+        client_session_token="token-sources",
+        status="created",
+        input_mode="live_chunks",
+        chunk_duration_ms=300000,
+        chunk_overlap_ms=2500,
+    )
+    db_session.add(session)
+    db_session.flush()
+
+    live_chunk = SessionChunk(
+        session_id=session.id,
+        chunk_index=0,
+        source_type="live_chunk",
+        start_ms=0,
+        end_ms=300000,
+        duration_ms=300000,
+        sha256="live",
+        storage_path="sessions/mts_test_sources/live-chunks/0.wav",
+        upload_status="uploaded",
+        process_status="pending",
+    )
+    fallback_chunk = SessionChunk(
+        session_id=session.id,
+        chunk_index=0,
+        source_type="server_split_from_full_audio",
+        start_ms=0,
+        end_ms=300000,
+        duration_ms=300000,
+        sha256="fallback",
+        storage_path="sessions/mts_test_sources/fallback/split/0.wav",
+        upload_status="uploaded",
+        process_status="pending",
+    )
+    db_session.add_all([live_chunk, fallback_chunk])
+    db_session.commit()
+
+    assert live_chunk.id is not None
+    assert fallback_chunk.id is not None
+
+
+def test_schema_enforces_chunk_session_foreign_key(db_session):
+    orphan_chunk = SessionChunk(
+        session_id=uuid4(),
+        chunk_index=0,
+        source_type="live_chunk",
+        start_ms=0,
+        end_ms=300000,
+        duration_ms=300000,
+        sha256="orphan",
+        storage_path="sessions/missing/live-chunks/0.wav",
+        upload_status="uploaded",
+        process_status="pending",
+    )
+    db_session.add(orphan_chunk)
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+
+
+def test_local_artifact_storage_rejects_escape_paths(tmp_path):
+    storage = LocalArtifactStorage(tmp_path)
+
+    with pytest.raises(ValueError):
+        storage.resolve("../escape.txt")
+
+    with pytest.raises(ValueError):
+        storage.resolve("/tmp/escape.txt")
