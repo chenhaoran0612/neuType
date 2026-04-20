@@ -1,33 +1,50 @@
-"""FastAPI application scaffold for the meeting transcription service."""
+"""FastAPI application composition for the meeting transcription service."""
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from fastapi import FastAPI
+from sqlalchemy.orm import Session, sessionmaker
+
+from meeting_transcription.db import create_engine, create_session_factory
+from meeting_transcription.models import Base
+from meeting_transcription.routes import router as sessions_router
+from meeting_transcription.storage import LocalArtifactStorage
+
+DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./meeting_transcription.db"
+DEFAULT_STORAGE_ROOT = "./artifacts"
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    session_factory: sessionmaker[Session] | None = None,
+    storage: LocalArtifactStorage | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="Meeting Transcription Service")
-    sessions_router = APIRouter(prefix="/api/meeting-transcription/sessions")
+
+    if session_factory is None:
+        database_url = os.environ.get(
+            "MEETING_TRANSCRIPTION_DATABASE_URL", DEFAULT_DATABASE_URL
+        )
+        engine = create_engine(database_url)
+        Base.metadata.create_all(engine)
+        session_factory = create_session_factory(engine)
+
+    if storage is None:
+        storage_root = Path(
+            os.environ.get("MEETING_TRANSCRIPTION_STORAGE_ROOT", DEFAULT_STORAGE_ROOT)
+        )
+        storage = LocalArtifactStorage(storage_root)
+
+    app.state.session_factory = session_factory
+    app.state.storage = storage
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
-
-    @sessions_router.post(
-        "",
-        status_code=501,
-        responses={501: {"description": "Not implemented"}},
-    )
-    def create_session() -> None:
-        raise HTTPException(status_code=501, detail="Not implemented")
-
-    @sessions_router.get(
-        "/{session_id}",
-        status_code=501,
-        responses={501: {"description": "Not implemented"}},
-    )
-    def get_session(session_id: str) -> None:
-        del session_id
-        raise HTTPException(status_code=501, detail="Not implemented")
 
     app.include_router(sessions_router)
     return app

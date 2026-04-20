@@ -1,10 +1,11 @@
-from fastapi.testclient import TestClient
 from datetime import datetime, timezone
+from io import BytesIO
 import os
 from pathlib import Path
 import pytest
 import sqlite3
 import subprocess
+from fastapi.testclient import TestClient
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
 from meeting_transcription.models import Base, SessionChunk, TranscriptionSession
@@ -13,20 +14,18 @@ from sqlalchemy.exc import IntegrityError
 from uuid import uuid4
 
 
-def test_health_route_and_session_routes_exist():
-    client = TestClient(create_app())
-
+def test_health_route_and_session_routes_exist(client):
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
     paths = response.json()["paths"]
     assert "/api/meeting-transcription/sessions" in paths
     assert "/api/meeting-transcription/sessions/{session_id}" in paths
+    assert "/api/meeting-transcription/sessions/{session_id}/chunks/{chunk_index}" in paths
+    assert "/api/meeting-transcription/sessions/{session_id}/finalize" in paths
 
 
-def test_placeholder_session_routes_do_not_advertise_200_success():
-    client = TestClient(create_app())
-
+def test_session_routes_advertise_api_contract_responses(client):
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
@@ -37,11 +36,16 @@ def test_placeholder_session_routes_do_not_advertise_200_success():
     get_session_responses = paths["/api/meeting-transcription/sessions/{session_id}"][
         "get"
     ]["responses"]
+    upload_chunk_responses = paths[
+        "/api/meeting-transcription/sessions/{session_id}/chunks/{chunk_index}"
+    ]["put"]["responses"]
 
-    assert "200" not in create_session_responses
-    assert "200" not in get_session_responses
-    assert "501" in create_session_responses
-    assert "501" in get_session_responses
+    assert "201" in create_session_responses
+    assert "200" in create_session_responses
+    assert "200" in get_session_responses
+    assert "201" in upload_chunk_responses
+    assert "200" in upload_chunk_responses
+    assert "409" in upload_chunk_responses
 
 
 @pytest.fixture
@@ -56,6 +60,91 @@ def db_session():
     finally:
         session.close()
         engine.dispose()
+
+
+@pytest.fixture
+def client(tmp_path):
+    database_path = tmp_path / "meeting-transcription-test.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = LocalArtifactStorage(tmp_path / "artifacts")
+
+    with TestClient(create_app(session_factory=session_factory, storage=storage)) as app:
+        yield app
+
+    engine.dispose()
+
+
+@pytest.fixture
+def created_session(client):
+    payload = {
+        "client_session_token": "created-session-token",
+        "source": "neutype-macos",
+        "chunk_duration_ms": 300000,
+        "chunk_overlap_ms": 2500,
+        "audio_format": "wav",
+        "sample_rate_hz": 16000,
+        "channel_count": 1,
+    }
+
+    response = client.post("/api/meeting-transcription/sessions", json=payload)
+
+    assert response.status_code == 201
+    return response.json()["data"]["session_id"]
+
+
+@pytest.fixture
+def wav_file():
+    return BytesIO(b"RIFFtestWAVEfmt " + (b"\x00" * 120))
+
+
+def test_create_session_is_idempotent(client):
+    payload = {
+        "client_session_token": "token-1",
+        "source": "neutype-macos",
+        "chunk_duration_ms": 300000,
+        "chunk_overlap_ms": 2500,
+        "audio_format": "wav",
+        "sample_rate_hz": 16000,
+        "channel_count": 1,
+    }
+
+    first = client.post("/api/meeting-transcription/sessions", json=payload)
+    second = client.post("/api/meeting-transcription/sessions", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["data"]["session_id"] == second.json()["data"]["session_id"]
+
+
+def test_chunk_upload_rejects_same_index_different_hash(client, created_session, wav_file):
+    first = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
+        files={"audio_file": ("chunk.wav", wav_file, "audio/wav")},
+        data={
+            "start_ms": 0,
+            "end_ms": 300000,
+            "sha256": "hash-a",
+            "mime_type": "audio/wav",
+            "file_size_bytes": 128,
+        },
+    )
+    wav_file.seek(0)
+    second = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/chunks/0",
+        files={"audio_file": ("chunk.wav", wav_file, "audio/wav")},
+        data={
+            "start_ms": 0,
+            "end_ms": 300000,
+            "sha256": "hash-b",
+            "mime_type": "audio/wav",
+            "file_size_bytes": 128,
+        },
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
 
 
 def test_schema_persists_session_and_chunk(db_session):
