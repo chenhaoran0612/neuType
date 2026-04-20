@@ -23,6 +23,19 @@ class StubTranscriber:
         }
 
 
+class FailingOnceTranscriber:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary model outage")
+        return StubTranscriber().transcribe_chunk(
+            session=session, chunk=chunk, audio_path=audio_path
+        )
+
+
 class WorkerHarness:
     def __init__(self, tmp_path: Path) -> None:
         self.storage = LocalArtifactStorage(tmp_path / "artifacts")
@@ -135,6 +148,17 @@ class WorkerHarness:
         finally:
             db.close()
 
+    def mark_full_audio_uploaded_without_path(self, public_session: TranscriptionSession) -> None:
+        db = self.session_factory()
+        try:
+            session = self.fetch_session(public_session.session_id, db=db)
+            session.final_audio_uploaded = True
+            session.final_audio_sha256 = "sha-without-storage-path"
+            session.final_audio_storage_path = None
+            db.commit()
+        finally:
+            db.close()
+
     def finalize(self, public_session_id: str, *, expected_chunk_count: int = 3) -> None:
         from meeting_transcription.repositories import finalize_session
         from meeting_transcription.schemas import FinalizeSessionRequest
@@ -153,10 +177,12 @@ class WorkerHarness:
         finally:
             db.close()
 
-    def run_once(self) -> bool:
+    def run_once(self, transcriber=None) -> bool:
         db = self.session_factory()
         try:
-            return run_pending_chunk_once(db, self.transcriber, storage=self.storage)
+            return run_pending_chunk_once(
+                db, transcriber or self.transcriber, storage=self.storage
+            )
         finally:
             db.close()
 
@@ -278,3 +304,101 @@ def test_finalize_uses_fallback_split_when_live_chunks_missing(
     assert live_chunk.process_status == "pending"
     assert [chunk.chunk_index for chunk in fallback_chunks] == [0, 1, 2]
     assert all(chunk.process_status == "completed" for chunk in fallback_chunks)
+
+
+def test_fallback_after_live_commit_resets_frontier_and_completes_from_fallback(
+    worker_harness: WorkerHarness, full_audio_file: Path
+):
+    session = worker_harness.seed_session_with_missing_live_chunks()
+    assert worker_harness.run_once() is True
+    assert worker_harness.run_once() is True
+
+    committed_live_session = worker_harness.fetch_session(session.session_id)
+    committed_live_chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert committed_live_session.last_committed_chunk_index == 0
+    assert committed_live_chunk.process_status == "completed"
+
+    worker_harness.attach_full_audio(session, full_audio_file)
+    worker_harness.finalize(session.session_id)
+    worker_harness.run_until_idle()
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    fallback_chunks = worker_harness.list_chunks(
+        session.session_id, "server_split_from_full_audio"
+    )
+    live_chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+
+    assert refreshed.selected_final_input_mode == "full_audio_fallback"
+    assert refreshed.last_committed_chunk_index == len(fallback_chunks) - 1
+    assert refreshed.status == "completed"
+    assert [chunk.chunk_index for chunk in fallback_chunks] == [0, 1, 2]
+    assert all(chunk.process_status == "completed" for chunk in fallback_chunks)
+    assert live_chunk.process_status == "completed"
+
+
+def test_worker_does_not_complete_live_session_before_finalize(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+
+    assert worker_harness.run_once() is True
+    assert worker_harness.run_once() is True
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert refreshed.status == "receiving_chunks"
+    assert refreshed.last_committed_chunk_index == 0
+    assert chunk.process_status == "completed"
+
+
+def test_finalize_does_not_select_fallback_without_full_audio_storage_path(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_missing_live_chunks()
+    worker_harness.mark_full_audio_uploaded_without_path(session)
+
+    worker_harness.finalize(session.session_id)
+    worker_harness.run_until_idle()
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    fallback_chunks = worker_harness.list_chunks(
+        session.session_id, "server_split_from_full_audio"
+    )
+    assert refreshed.status == "awaiting_finalize"
+    assert refreshed.selected_final_input_mode == "live_chunks"
+    assert refreshed.input_mode == "live_chunks"
+    assert fallback_chunks == []
+
+
+def test_transcriber_failure_resets_chunk_to_pending_for_retry(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+    transcriber = FailingOnceTranscriber()
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    failed_chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert failed_chunk.process_status == "pending"
+    assert failed_chunk.retry_count == 1
+    assert "temporary model outage" in failed_chunk.error_message
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    retried_chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    refreshed = worker_harness.fetch_session(session.session_id)
+    assert retried_chunk.process_status == "completed"
+    assert retried_chunk.retry_count == 1
+    assert refreshed.status == "receiving_chunks"
+
+
+def test_splitter_rejects_invalid_overlap_config(
+    full_audio_file: Path,
+):
+    from meeting_transcription.audio_chunks import split_full_audio_into_chunks
+
+    with pytest.raises(ValueError, match="overlap_ms"):
+        split_full_audio_into_chunks(str(full_audio_file), 300000, 300000)
+
+    with pytest.raises(ValueError, match="overlap_ms"):
+        split_full_audio_into_chunks(str(full_audio_file), 300000, -1)

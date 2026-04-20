@@ -695,4 +695,4 @@ def test_alembic_upgrade_stamps_revision_on_fresh_sqlite_db(tmp_path):
             "SELECT version_num FROM alembic_version"
         ).fetchone()
 
-    assert row == ("20260420_01",)
+    assert row == ("20260420_02",)

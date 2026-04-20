@@ -24,6 +24,13 @@ def split_full_audio_into_chunks(
     audio_path: str, chunk_duration_ms: int, overlap_ms: int
 ) -> list[SplitChunk]:
     """Split a WAV file into overlapped chunks for fallback processing."""
+    if overlap_ms < 0:
+        raise ValueError("overlap_ms must be non-negative")
+    if chunk_duration_ms <= 0:
+        raise ValueError("chunk_duration_ms must be positive")
+    if overlap_ms >= chunk_duration_ms:
+        raise ValueError("overlap_ms must be smaller than chunk_duration_ms")
+
     with wave.open(audio_path, "rb") as wav_file:
         params = wav_file.getparams()
         frame_rate = wav_file.getframerate()
@@ -40,7 +47,7 @@ def split_full_audio_into_chunks(
     chunks: list[SplitChunk] = []
     start_ms = 0
     chunk_index = 0
-    stride_ms = max(1, chunk_duration_ms - overlap_ms)
+    stride_ms = chunk_duration_ms - overlap_ms
 
     while start_ms < total_duration_ms:
         end_ms = min(total_duration_ms, start_ms + chunk_duration_ms)

@@ -22,6 +22,9 @@ def run_pending_chunk_once(
     if repositories.advance_commit_frontier(db):
         return True
 
+    if repositories.recover_stale_processing_chunks(db):
+        return True
+
     if _materialize_fallback_chunks_once(db, storage=storage):
         return True
 
@@ -31,11 +34,18 @@ def run_pending_chunk_once(
 
     repositories.mark_chunk_processing(db, chunk)
     session = chunk.session
-    result = transcriber.transcribe_chunk(
-        session=session,
-        chunk=chunk,
-        audio_path=str(storage.resolve(chunk.storage_path)),
-    )
+    try:
+        result = transcriber.transcribe_chunk(
+            session=session,
+            chunk=chunk,
+            audio_path=str(storage.resolve(chunk.storage_path)),
+        )
+    except Exception as exc:
+        repositories.reset_chunk_after_processing_failure(
+            db, chunk, error_message=str(exc)
+        )
+        return True
+
     repositories.mark_chunk_processed(
         db,
         chunk,

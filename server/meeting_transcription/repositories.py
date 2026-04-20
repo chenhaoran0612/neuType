@@ -255,10 +255,15 @@ def finalize_session(
         missing_chunk_indexes = sorted(set(range(expected_count)) - uploaded_indexes)
 
     if missing_chunk_indexes:
-        if payload.allow_full_audio_fallback and session.final_audio_uploaded:
+        if (
+            payload.allow_full_audio_fallback
+            and session.final_audio_uploaded
+            and session.final_audio_storage_path
+        ):
             session.status = "finalizing"
             session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
             session.selected_final_input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
+            session.last_committed_chunk_index = -1
             session.finalized_at = utcnow()
         else:
             session.status = "awaiting_finalize"
@@ -364,6 +369,33 @@ def mark_chunk_processed(db: Session, chunk: SessionChunk, *, segment_count: int
     chunk.error_message = None
     db.commit()
     db.refresh(chunk)
+
+
+def reset_chunk_after_processing_failure(
+    db: Session, chunk: SessionChunk, *, error_message: str
+) -> None:
+    """Reset a chunk for retry after a transcriber or storage failure."""
+    chunk.process_status = CHUNK_PROCESS_PENDING
+    chunk.retry_count += 1
+    chunk.error_message = error_message
+    db.commit()
+    db.refresh(chunk)
+
+
+def recover_stale_processing_chunks(db: Session) -> bool:
+    """Reset stranded processing chunks back to pending."""
+    stranded = db.scalars(
+        select(SessionChunk).where(SessionChunk.process_status == CHUNK_PROCESS_PROCESSING)
+    ).all()
+    if not stranded:
+        return False
+
+    for chunk in stranded:
+        chunk.process_status = CHUNK_PROCESS_PENDING
+        chunk.error_message = chunk.error_message or "recovered stale processing chunk"
+
+    db.commit()
+    return True
 
 
 def advance_commit_frontier(db: Session) -> bool:
@@ -493,6 +525,9 @@ def _session_has_uploaded_live_chunks(db: Session, session_id) -> bool:
 def _maybe_complete_session(
     db: Session, session: TranscriptionSession, source_type: str
 ) -> None:
+    if session.status != "finalizing":
+        return
+
     chunks = db.scalars(
         select(SessionChunk)
         .where(
@@ -510,6 +545,12 @@ def _maybe_complete_session(
 
     if session.last_committed_chunk_index != chunks[-1].chunk_index:
         return
+
+    if source_type == LIVE_CHUNK_SOURCE_TYPE:
+        if session.expected_chunk_count is None:
+            return
+        if session.last_committed_chunk_index != session.expected_chunk_count - 1:
+            return
 
     session.status = "completed"
     session.finalized_at = session.finalized_at or utcnow()
