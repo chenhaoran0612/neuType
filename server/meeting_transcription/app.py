@@ -12,11 +12,19 @@ def create_app() -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @sessions_router.post("")
+    @sessions_router.post(
+        "",
+        status_code=501,
+        responses={501: {"description": "Not implemented"}},
+    )
     def create_session() -> None:
         raise HTTPException(status_code=501, detail="Not implemented")
 
-    @sessions_router.get("/{session_id}")
+    @sessions_router.get(
+        "/{session_id}",
+        status_code=501,
+        responses={501: {"description": "Not implemented"}},
+    )
     def get_session(session_id: str) -> None:
         del session_id
         raise HTTPException(status_code=501, detail="Not implemented")
