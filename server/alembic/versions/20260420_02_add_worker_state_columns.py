@@ -29,9 +29,19 @@ def upgrade() -> None:
             server_default=sa.text("-1"),
         ),
     )
+    op.add_column(
+        "session_chunks",
+        sa.Column("processing_started_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "session_chunks",
+        sa.Column("processing_completed_at", sa.DateTime(timezone=True), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("session_chunks", "processing_completed_at")
+    op.drop_column("session_chunks", "processing_started_at")
     op.drop_column("transcription_sessions", "last_committed_chunk_index")
     op.drop_column("transcription_sessions", "final_audio_storage_path")
     op.drop_column("transcription_sessions", "selected_final_input_mode")

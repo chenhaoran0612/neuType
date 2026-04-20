@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 import hashlib
 from pathlib import Path
 from uuid import uuid4
@@ -32,7 +33,12 @@ CHUNK_PROCESS_PENDING = "pending"
 CHUNK_PROCESS_PROCESSING = "processing"
 CHUNK_PROCESS_PROCESSED = "processed"
 CHUNK_PROCESS_COMPLETED = "completed"
+CHUNK_PROCESS_FAILED = "failed"
 TERMINAL_SESSION_STATUSES = {"completed", "failed"}
+AWAITING_FINALIZE_STATUS = "awaiting_finalize"
+AWAITING_FALLBACK_STATUS = "awaiting_fallback"
+MAX_CHUNK_PROCESSING_RETRIES = 3
+STALE_PROCESSING_THRESHOLD_SECONDS = 300
 
 
 class SessionNotFoundError(Exception):
@@ -54,26 +60,20 @@ class InvalidChunkMetadataError(Exception):
 
 @dataclass(slots=True)
 class SessionRecord:
-    """Created or reused transcription session."""
-
     session: TranscriptionSession
     reused: bool
 
     def response_model(self) -> CreateSessionResponse:
-        """Convert the ORM session to its API response payload."""
         return CreateSessionResponse.model_validate(self.session)
 
 
 @dataclass(slots=True)
 class ChunkRecord:
-    """Stored or reused live chunk result."""
-
     session: TranscriptionSession
     chunk: SessionChunk
     reused: bool
 
     def response_model(self) -> UploadChunkResponse:
-        """Convert the stored chunk to its API response payload."""
         return UploadChunkResponse(
             session_id=self.session.session_id,
             chunk_index=self.chunk.chunk_index,
@@ -84,7 +84,6 @@ class ChunkRecord:
 
 
 def create_or_get_session(db: Session, payload: CreateSessionRequest) -> SessionRecord:
-    """Create a new transcription session or reuse an existing one."""
     existing = db.scalar(
         select(TranscriptionSession).where(
             TranscriptionSession.client_session_token == payload.client_session_token
@@ -134,7 +133,6 @@ def store_live_chunk(
     filename: str,
     audio_bytes: bytes,
 ) -> ChunkRecord:
-    """Persist a live chunk upload with idempotent conflict handling."""
     del mime_type
 
     actual_sha256 = hashlib.sha256(audio_bytes).hexdigest()
@@ -180,8 +178,8 @@ def store_live_chunk(
         upload_status=UPLOAD_STATUS_PENDING,
         process_status=CHUNK_PROCESS_PENDING,
     )
-
     db.add(chunk)
+
     try:
         db.commit()
     except IntegrityError:
@@ -214,7 +212,6 @@ def store_live_chunk(
 
 
 def get_session_status(db: Session, public_session_id: str) -> SessionStatusResponse:
-    """Return the current session status payload."""
     session = _get_session_by_public_id(db, public_session_id)
     uploaded_chunk_count = len(
         [
@@ -240,7 +237,6 @@ def finalize_session(
     public_session_id: str,
     payload: FinalizeSessionRequest,
 ) -> FinalizeSessionResponse:
-    """Finalize a session, selecting fallback-only mode when live chunks are incomplete."""
     session = _get_session_by_public_id(db, public_session_id)
     uploaded_indexes = {
         chunk.chunk_index
@@ -254,30 +250,46 @@ def finalize_session(
         session.expected_chunk_count = expected_count
         missing_chunk_indexes = sorted(set(range(expected_count)) - uploaded_indexes)
 
-    if missing_chunk_indexes:
-        if (
-            payload.allow_full_audio_fallback
-            and session.final_audio_uploaded
-            and session.final_audio_storage_path
-        ):
-            session.status = "finalizing"
-            session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
-            session.selected_final_input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
-            session.last_committed_chunk_index = -1
-            session.finalized_at = utcnow()
-        else:
-            session.status = "awaiting_finalize"
-            session.input_mode = LIVE_CHUNKS_INPUT_MODE
-            session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE
+    usable_fallback = _session_has_usable_full_audio(session)
+    switching_to_fallback = (
+        bool(missing_chunk_indexes)
+        and payload.allow_full_audio_fallback
+        and usable_fallback
+        and session.selected_final_input_mode != FULL_AUDIO_FALLBACK_INPUT_MODE
+    )
+
+    if switching_to_fallback:
+        session.status = "finalizing"
+        session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
+        session.selected_final_input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
+        session.last_committed_chunk_index = -1
+        session.finalized_at = session.finalized_at or utcnow()
+    elif (
+        bool(missing_chunk_indexes)
+        and session.selected_final_input_mode == FULL_AUDIO_FALLBACK_INPUT_MODE
+        and usable_fallback
+    ):
+        session.status = session.status if session.status in TERMINAL_SESSION_STATUSES else "finalizing"
+        session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
+    elif missing_chunk_indexes:
+        session.status = AWAITING_FALLBACK_STATUS
+        session.input_mode = LIVE_CHUNKS_INPUT_MODE
+        session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE
+    elif session.selected_final_input_mode == FULL_AUDIO_FALLBACK_INPUT_MODE:
+        session.status = session.status if session.status in TERMINAL_SESSION_STATUSES else "finalizing"
+        session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
+    elif expected_count is None:
+        session.status = AWAITING_FINALIZE_STATUS
+        session.input_mode = LIVE_CHUNKS_INPUT_MODE
+        session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE
     else:
         session.status = "finalizing"
         session.input_mode = LIVE_CHUNKS_INPUT_MODE
         session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE
-        session.finalized_at = utcnow()
+        session.finalized_at = session.finalized_at or utcnow()
 
     db.commit()
     db.refresh(session)
-
     return FinalizeSessionResponse(
         session_id=session.session_id,
         status=session.status,
@@ -287,7 +299,6 @@ def finalize_session(
 
 
 def next_pending_chunk(db: Session) -> SessionChunk | None:
-    """Return the next eligible uploaded chunk for worker processing."""
     for session in _active_sessions(db):
         source_type = selected_source_type_for_session(session)
         chunk = db.scalar(
@@ -306,7 +317,6 @@ def next_pending_chunk(db: Session) -> SessionChunk | None:
 
 
 def selected_source_type_for_session(session: TranscriptionSession) -> str:
-    """Return which chunk source path should drive worker processing."""
     selected_mode = session.selected_final_input_mode or session.input_mode
     if selected_mode == FULL_AUDIO_FALLBACK_INPUT_MODE:
         return FALLBACK_SPLIT_SOURCE_TYPE
@@ -314,7 +324,6 @@ def selected_source_type_for_session(session: TranscriptionSession) -> str:
 
 
 def fallback_chunks_exist(db: Session, session: TranscriptionSession) -> bool:
-    """Return whether fallback split chunks already exist for the session."""
     return (
         db.scalar(
             select(SessionChunk.id).where(
@@ -337,7 +346,6 @@ def create_fallback_chunk(
     sha256: str,
     storage_path: str,
 ) -> SessionChunk:
-    """Insert one server-generated fallback split chunk."""
     chunk = SessionChunk(
         session_id=session.id,
         chunk_index=chunk_index,
@@ -356,17 +364,18 @@ def create_fallback_chunk(
 
 
 def mark_chunk_processing(db: Session, chunk: SessionChunk) -> None:
-    """Mark a chunk as currently processing."""
     chunk.process_status = CHUNK_PROCESS_PROCESSING
+    chunk.processing_started_at = utcnow()
+    chunk.processing_completed_at = None
     db.commit()
     db.refresh(chunk)
 
 
 def mark_chunk_processed(db: Session, chunk: SessionChunk, *, segment_count: int) -> None:
-    """Persist a durable parsed result for later ordered commit."""
     chunk.process_status = CHUNK_PROCESS_PROCESSED
     chunk.result_segment_count = segment_count
     chunk.error_message = None
+    chunk.processing_completed_at = utcnow()
     db.commit()
     db.refresh(chunk)
 
@@ -374,32 +383,57 @@ def mark_chunk_processed(db: Session, chunk: SessionChunk, *, segment_count: int
 def reset_chunk_after_processing_failure(
     db: Session, chunk: SessionChunk, *, error_message: str
 ) -> None:
-    """Reset a chunk for retry after a transcriber or storage failure."""
-    chunk.process_status = CHUNK_PROCESS_PENDING
+    session = chunk.session
     chunk.retry_count += 1
     chunk.error_message = error_message
+    chunk.processing_completed_at = utcnow()
+
+    if chunk.retry_count >= MAX_CHUNK_PROCESSING_RETRIES:
+        chunk.process_status = CHUNK_PROCESS_FAILED
+        if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE and _session_has_usable_full_audio(session):
+            session.status = AWAITING_FALLBACK_STATUS
+            session.input_mode = LIVE_CHUNKS_INPUT_MODE
+            session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE
+        else:
+            session.status = "failed"
+        session.last_error = error_message
+    else:
+        chunk.process_status = CHUNK_PROCESS_PENDING
+        chunk.processing_started_at = None
+
     db.commit()
     db.refresh(chunk)
+    db.refresh(session)
 
 
 def recover_stale_processing_chunks(db: Session) -> bool:
-    """Reset stranded processing chunks back to pending."""
-    stranded = db.scalars(
+    cutoff = utcnow() - timedelta(seconds=STALE_PROCESSING_THRESHOLD_SECONDS)
+    processing_chunks = db.scalars(
         select(SessionChunk).where(SessionChunk.process_status == CHUNK_PROCESS_PROCESSING)
     ).all()
-    if not stranded:
-        return False
-
-    for chunk in stranded:
+    recovered = False
+    for chunk in processing_chunks:
+        started_at = chunk.processing_started_at
+        if started_at is not None and started_at > cutoff:
+            continue
         chunk.process_status = CHUNK_PROCESS_PENDING
+        chunk.processing_started_at = None
         chunk.error_message = chunk.error_message or "recovered stale processing chunk"
+        recovered = True
 
+    if recovered:
+        db.commit()
+    return recovered
+
+
+def mark_session_failed(db: Session, session: TranscriptionSession, *, error_message: str) -> None:
+    session.status = "failed"
+    session.last_error = error_message
     db.commit()
-    return True
+    db.refresh(session)
 
 
 def advance_commit_frontier(db: Session) -> bool:
-    """Advance durable commit ordering for any next-ready chunks."""
     advanced = False
     for session in _active_sessions(db):
         source_type = selected_source_type_for_session(session)
@@ -432,9 +466,7 @@ def advance_commit_frontier(db: Session) -> bool:
     return advanced
 
 
-def _get_session_by_public_id(
-    db: Session, public_session_id: str
-) -> TranscriptionSession:
+def _get_session_by_public_id(db: Session, public_session_id: str) -> TranscriptionSession:
     session = db.scalar(
         select(TranscriptionSession).where(
             TranscriptionSession.session_id == public_session_id
@@ -478,9 +510,7 @@ def _handle_existing_live_chunk(
             f"chunk {chunk_index} already exists with a different sha256"
         )
 
-    if chunk.upload_status == UPLOAD_STATUS_UPLOADED and storage.exists(
-        chunk.storage_path
-    ):
+    if chunk.upload_status == UPLOAD_STATUS_UPLOADED and storage.exists(chunk.storage_path):
         return ChunkRecord(session=session, chunk=chunk, reused=True)
 
     try:
@@ -520,6 +550,10 @@ def _session_has_uploaded_live_chunks(db: Session, session_id) -> bool:
         )
     )
     return uploaded_chunk is not None
+
+
+def _session_has_usable_full_audio(session: TranscriptionSession) -> bool:
+    return bool(session.final_audio_uploaded and session.final_audio_storage_path)
 
 
 def _maybe_complete_session(

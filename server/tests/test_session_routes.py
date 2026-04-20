@@ -245,7 +245,7 @@ def test_finalize_selected_input_mode_matches_persisted_session_state(client, cr
 
     assert response.status_code == 200
     assert status_response.status_code == 200
-    assert response.json()["data"]["status"] == "awaiting_finalize"
+    assert response.json()["data"]["status"] == "awaiting_fallback"
     assert response.json()["data"]["selected_input_mode"] == "live_chunks"
     assert status_response.json()["data"]["input_mode"] == "live_chunks"
 

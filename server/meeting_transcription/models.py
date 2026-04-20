@@ -138,6 +138,12 @@ class SessionChunk(Base):
     retry_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    processing_completed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     result_segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

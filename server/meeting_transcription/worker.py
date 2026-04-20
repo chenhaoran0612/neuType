@@ -69,30 +69,37 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
         if repositories.fallback_chunks_exist(db, session):
             continue
 
-        split_chunks = split_full_audio_into_chunks(
-            str(storage.resolve(session.final_audio_storage_path)),
-            session.chunk_duration_ms,
-            session.chunk_overlap_ms,
-        )
-        for split_chunk in split_chunks:
-            storage_path = storage.session_path(
-                session.session_id,
-                "fallback-split-chunks",
-                f"{split_chunk.chunk_index}.wav",
+        try:
+            split_chunks = split_full_audio_into_chunks(
+                str(storage.resolve(session.final_audio_storage_path)),
+                session.chunk_duration_ms,
+                session.chunk_overlap_ms,
             )
-            storage.write_bytes(storage_path, split_chunk.audio_bytes)
-            repositories.create_fallback_chunk(
-                db,
-                session=session,
-                chunk_index=split_chunk.chunk_index,
-                start_ms=split_chunk.start_ms,
-                end_ms=split_chunk.end_ms,
-                duration_ms=split_chunk.duration_ms,
-                sha256=split_chunk.sha256,
-                storage_path=storage_path,
-            )
+            if not split_chunks:
+                raise ValueError("fallback full audio split produced zero chunks")
 
-        db.commit()
+            for split_chunk in split_chunks:
+                storage_path = storage.session_path(
+                    session.session_id,
+                    "fallback-split-chunks",
+                    f"{split_chunk.chunk_index}.wav",
+                )
+                storage.write_bytes(storage_path, split_chunk.audio_bytes)
+                repositories.create_fallback_chunk(
+                    db,
+                    session=session,
+                    chunk_index=split_chunk.chunk_index,
+                    start_ms=split_chunk.start_ms,
+                    end_ms=split_chunk.end_ms,
+                    duration_ms=split_chunk.duration_ms,
+                    sha256=split_chunk.sha256,
+                    storage_path=storage_path,
+                )
+            db.commit()
+        except Exception as exc:
+            repositories.mark_session_failed(
+                db, session, error_message=f"fallback wav materialization failed: {exc}"
+            )
         return True
 
     return False
