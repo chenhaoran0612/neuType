@@ -17,6 +17,7 @@ from sqlalchemy import (
     false,
     text,
 )
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from meeting_transcription.db import Base
@@ -25,6 +26,34 @@ from meeting_transcription.db import Base
 def utcnow() -> datetime:
     """Return a timezone-aware timestamp in UTC."""
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Persist UTC datetimes while returning timezone-aware UTC values."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+
+        if value.tzinfo is None:
+            raise ValueError("Datetime values must be timezone-aware")
+
+        normalized = value.astimezone(timezone.utc)
+        if dialect.name == "sqlite":
+            return normalized.replace(tzinfo=None)
+        return normalized
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        del dialect
+        if value is None:
+            return None
+
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class TranscriptionSession(Base):
@@ -47,27 +76,27 @@ class TranscriptionSession(Base):
     )
     final_audio_sha256: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utcnow,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     finalized_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     chunks: Mapped[list["SessionChunk"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="SessionChunk.chunk_index",
+        order_by=lambda: (SessionChunk.chunk_index, SessionChunk.source_type),
     )
 
 
@@ -97,17 +126,19 @@ class SessionChunk(Base):
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
     upload_status: Mapped[str] = mapped_column(String(64), nullable=False)
     process_status: Mapped[str] = mapped_column(String(64), nullable=False)
-    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     result_segment_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utcnow,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime(),
         nullable=False,
         default=utcnow,
         onupdate=utcnow,

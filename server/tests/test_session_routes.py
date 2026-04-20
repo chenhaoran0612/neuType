@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
 import pytest
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
@@ -83,6 +84,26 @@ def test_schema_persists_session_and_chunk(db_session):
     assert chunk.id is not None
 
 
+def test_schema_round_trips_utc_aware_timestamps(db_session):
+    finalized_at = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+    session = TranscriptionSession(
+        session_id="mts_test_timestamps",
+        client_session_token="token-timestamps",
+        status="completed",
+        input_mode="live_chunks",
+        chunk_duration_ms=300000,
+        chunk_overlap_ms=2500,
+        finalized_at=finalized_at,
+    )
+    db_session.add(session)
+    db_session.commit()
+    db_session.refresh(session)
+
+    assert session.created_at.tzinfo is timezone.utc
+    assert session.updated_at.tzinfo is timezone.utc
+    assert session.finalized_at == finalized_at
+
+
 def test_schema_allows_same_chunk_index_for_different_source_types(db_session):
     session = TranscriptionSession(
         session_id="mts_test_sources",
@@ -124,6 +145,70 @@ def test_schema_allows_same_chunk_index_for_different_source_types(db_session):
 
     assert live_chunk.id is not None
     assert fallback_chunk.id is not None
+
+
+def test_session_relationship_orders_chunks_by_index_then_source_type(db_session):
+    session = TranscriptionSession(
+        session_id="mts_test_ordering",
+        client_session_token="token-ordering",
+        status="created",
+        input_mode="live_chunks",
+        chunk_duration_ms=300000,
+        chunk_overlap_ms=2500,
+    )
+    db_session.add(session)
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            SessionChunk(
+                session_id=session.id,
+                chunk_index=0,
+                source_type="server_split_from_full_audio",
+                start_ms=0,
+                end_ms=300000,
+                duration_ms=300000,
+                sha256="fallback-order",
+                storage_path="sessions/mts_test_ordering/fallback/split/0.wav",
+                upload_status="uploaded",
+                process_status="pending",
+            ),
+            SessionChunk(
+                session_id=session.id,
+                chunk_index=0,
+                source_type="live_chunk",
+                start_ms=0,
+                end_ms=300000,
+                duration_ms=300000,
+                sha256="live-order",
+                storage_path="sessions/mts_test_ordering/live-chunks/0.wav",
+                upload_status="uploaded",
+                process_status="pending",
+            ),
+            SessionChunk(
+                session_id=session.id,
+                chunk_index=1,
+                source_type="live_chunk",
+                start_ms=300000,
+                end_ms=600000,
+                duration_ms=300000,
+                sha256="live-order-1",
+                storage_path="sessions/mts_test_ordering/live-chunks/1.wav",
+                upload_status="uploaded",
+                process_status="pending",
+            ),
+        ]
+    )
+    db_session.commit()
+    db_session.expunge_all()
+
+    reloaded_session = db_session.get(TranscriptionSession, session.id)
+
+    assert [(chunk.chunk_index, chunk.source_type) for chunk in reloaded_session.chunks] == [
+        (0, "live_chunk"),
+        (0, "server_split_from_full_audio"),
+        (1, "live_chunk"),
+    ]
 
 
 def test_schema_enforces_chunk_session_foreign_key(db_session):
