@@ -80,8 +80,10 @@ def test_schema_persists_session_and_chunk(db_session):
     )
     db_session.add(chunk)
     db_session.commit()
+    db_session.refresh(chunk)
 
     assert chunk.id is not None
+    assert chunk.retry_count == 0
 
 
 def test_schema_round_trips_utc_aware_timestamps(db_session):
