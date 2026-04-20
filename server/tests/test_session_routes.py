@@ -1,6 +1,10 @@
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 import pytest
+import sqlite3
+import subprocess
 from meeting_transcription.app import create_app
 from meeting_transcription.db import create_engine, create_session_factory
 from meeting_transcription.models import Base, SessionChunk, TranscriptionSession
@@ -240,3 +244,29 @@ def test_local_artifact_storage_rejects_escape_paths(tmp_path):
 
     with pytest.raises(ValueError):
         storage.resolve("/tmp/escape.txt")
+
+
+def test_alembic_upgrade_stamps_revision_on_fresh_sqlite_db(tmp_path):
+    server_dir = Path(__file__).resolve().parents[1]
+    database_path = tmp_path / "migration-smoke.db"
+
+    completed = subprocess.run(
+        ["python", "-m", "alembic", "upgrade", "head"],
+        cwd=server_dir,
+        env={
+            **os.environ,
+            "MEETING_TRANSCRIPTION_DATABASE_URL": f"sqlite+pysqlite:///{database_path}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+
+    assert row == ("20260420_01",)

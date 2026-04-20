@@ -8,6 +8,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from meeting_transcription.db import enable_sqlite_foreign_keys
 from meeting_transcription.models import Base
 
 config = context.config
@@ -45,10 +46,10 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        if connection.dialect.name == "sqlite":
-            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+    if connectable.dialect.name == "sqlite":
+        enable_sqlite_foreign_keys(connectable)
 
+    with connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

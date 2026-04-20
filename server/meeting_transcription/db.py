@@ -22,6 +22,17 @@ metadata = MetaData(naming_convention=NAMING_CONVENTION)
 Base = declarative_base(metadata=metadata)
 
 
+def enable_sqlite_foreign_keys(engine: Engine) -> None:
+    """Enable SQLite foreign key enforcement for new DBAPI connections."""
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+        del connection_record
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 def create_engine(database_url: str, *, echo: bool = False) -> Engine:
     """Create a SQLAlchemy engine for the configured database URL."""
     is_sqlite = database_url.startswith("sqlite")
@@ -32,12 +43,7 @@ def create_engine(database_url: str, *, echo: bool = False) -> Engine:
     engine = sqlalchemy_create_engine(database_url, echo=echo, connect_args=connect_args)
 
     if is_sqlite:
-        @event.listens_for(engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
-            del connection_record
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
+        enable_sqlite_foreign_keys(engine)
 
     return engine
 
