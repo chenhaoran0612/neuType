@@ -694,5 +694,19 @@ def test_alembic_upgrade_stamps_revision_on_fresh_sqlite_db(tmp_path):
         row = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()
+        speaker_anchor_columns = {
+            column[1]: column for column in connection.execute(
+                "PRAGMA table_info(speaker_anchors)"
+            ).fetchall()
+        }
+        session_chunk_columns = {
+            column[1]: column for column in connection.execute(
+                "PRAGMA table_info(session_chunks)"
+            ).fetchall()
+        }
 
-    assert row == ("20260420_02",)
+    assert row == ("20260420_04",)
+    assert "anchor_storage_path" in speaker_anchor_columns
+    assert speaker_anchor_columns["anchor_storage_path"][3] == 0
+    assert "prepared_prefix_manifest_json" in session_chunk_columns
+    assert "normalized_segments_json" in session_chunk_columns
