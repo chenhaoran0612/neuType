@@ -33,6 +33,10 @@ class LocalArtifactStorage:
         destination.write_bytes(payload)
         return destination
 
+    def read_bytes(self, logical_path: str) -> bytes:
+        """Read bytes from the configured storage root."""
+        return self.resolve(logical_path).read_bytes()
+
     def exists(self, logical_path: str) -> bool:
         """Return whether the logical artifact exists on disk."""
         return self.resolve(logical_path).exists()

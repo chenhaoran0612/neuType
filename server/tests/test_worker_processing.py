@@ -467,6 +467,77 @@ def test_worker_creates_anchor_then_uses_prefix_plan_and_persists_normalized_seg
 
 
 
+def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_anchors(
+    worker_harness: WorkerHarness,
+):
+    class RecordingTranscriber:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session
+            self.calls.append({
+                "chunk_index": chunk.chunk_index,
+                "audio_path": audio_path,
+                "prefix_plan": prefix_plan,
+            })
+            if chunk.chunk_index == 0:
+                return {
+                    "segment_count": 1,
+                    "segments": [
+                        {
+                            "text": "我们开始今天的周会",
+                            "start_ms": 500,
+                            "end_ms": 3600,
+                            "speaker_label": "Speaker 1",
+                        }
+                    ],
+                }
+            assert prefix_plan is not None
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "prefixed real",
+                        "start_ms": prefix_plan.manifest.real_chunk_offset_ms + 300,
+                        "end_ms": prefix_plan.manifest.real_chunk_offset_ms + 1200,
+                        "speaker_label": "Speaker 9",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    transcriber = RecordingTranscriber()
+
+    raw_chunk_zero_path = str(worker_harness.storage.resolve(worker_harness.fetch_chunk(session.session_id, 0, "live_chunk").storage_path))
+    raw_chunk_one_path = str(worker_harness.storage.resolve(worker_harness.fetch_chunk(session.session_id, 1, "live_chunk").storage_path))
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert transcriber.calls[0]["audio_path"] == raw_chunk_zero_path
+    assert transcriber.calls[0]["prefix_plan"] is None
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    anchors = worker_harness.list_speaker_anchors(session.session_id)
+    assert len(anchors) == 1
+    anchor_path = anchors[0].anchor_storage_path
+    assert anchor_path is not None
+    assert worker_harness.storage.exists(anchor_path) is True
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    prefixed_call = transcriber.calls[1]
+    assert prefixed_call["audio_path"] != raw_chunk_one_path
+    assert prefixed_call["audio_path"].endswith("/artifacts/prefix/1.wav")
+    assert Path(prefixed_call["audio_path"]).exists() is True
+    assert prefixed_call["prefix_plan"] is not None
+
+
 def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: WorkerHarness):
     class MalformedPrefixTranscriber:
         def transcribe_chunk(
@@ -495,6 +566,43 @@ def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: W
     assert chunk.retry_count == 1
     assert "not-an-int" in chunk.error_message
     assert chunk.normalized_segments_json is None
+
+
+def test_worker_resets_chunk_when_manifest_validation_rejects_type_valid_payload(
+    worker_harness: WorkerHarness,
+):
+    class InvalidManifestTranscriber:
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, chunk, audio_path, prefix_plan
+            return {
+                "segment_count": 1,
+                "prefix_manifest": {
+                    "real_chunk_offset_ms": 1000,
+                    "prefix_total_ms": 900,
+                    "anchor_regions": [
+                        {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000}
+                    ],
+                },
+                "segments": [
+                    {"text": "broken", "start_ms": 1200, "end_ms": 1500, "speaker_label": "Speaker 1"}
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+
+    assert worker_harness.run_once(transcriber=InvalidManifestTranscriber()) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert chunk.process_status == "pending"
+    assert chunk.retry_count == 1
+    assert "prefix_total_ms" in (chunk.error_message or "")
 
 
 def test_out_of_order_processed_chunk_does_not_create_anchor_before_frontier_advances(
@@ -586,6 +694,48 @@ def test_worker_remaps_no_prefix_chunk_segments_to_absolute_timeline(
     assert json.loads(chunk.normalized_segments_json) == [
         {
             "text": "local time",
+            "start_ms": 300100,
+            "end_ms": 301600,
+            "speaker_label": "Speaker 3",
+            "speaker_key": None,
+        }
+    ]
+
+
+def test_worker_preserves_no_prefix_already_absolute_timestamps(
+    worker_harness: WorkerHarness,
+):
+    class AbsoluteTimestampTranscriber:
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, audio_path, prefix_plan
+            assert chunk.chunk_index == 1
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "already absolute",
+                        "start_ms": 300100,
+                        "end_ms": 301600,
+                        "speaker_label": "Speaker 3",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[1])
+
+    assert worker_harness.run_once(transcriber=AbsoluteTimestampTranscriber()) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    assert json.loads(chunk.normalized_segments_json) == [
+        {
+            "text": "already absolute",
             "start_ms": 300100,
             "end_ms": 301600,
             "speaker_label": "Speaker 3",

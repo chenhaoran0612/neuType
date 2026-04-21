@@ -132,3 +132,48 @@ def test_remap_real_chunk_segments_preserves_existing_speaker_key_when_unmapped(
     assert [(segment.start_ms, segment.end_ms, segment.speaker_key) for segment in remapped] == [
         (300300, 301000, "speaker_existing")
     ]
+
+
+def test_build_label_map_skips_anchor_region_with_equal_overlap_tie():
+    manifest = PrefixManifest(
+        real_chunk_offset_ms=3000,
+        anchor_regions=(
+            AnchorRegion(speaker_key="speaker_a", start_ms=0, end_ms=1000),
+        ),
+    )
+    segments = [
+        Segment(text="half1", start_ms=0, end_ms=500, speaker_label="Speaker 1"),
+        Segment(text="half2", start_ms=500, end_ms=1000, speaker_label="Speaker 2"),
+    ]
+
+    label_map = build_speaker_label_map(segments, manifest)
+
+    assert label_map == {}
+
+
+def test_manifest_from_dict_rejects_negative_offset_and_invalid_regions():
+    from meeting_transcription.anchor_audio import manifest_from_dict
+
+    invalid_payloads = [
+        {"real_chunk_offset_ms": -1},
+        {
+            "real_chunk_offset_ms": 1000,
+            "anchor_regions": [
+                {"speaker_key": "speaker_a", "start_ms": 500, "end_ms": 400}
+            ],
+        },
+        {
+            "real_chunk_offset_ms": 1000,
+            "prefix_total_ms": 900,
+            "anchor_regions": [
+                {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000}
+            ],
+        },
+    ]
+
+    for payload in invalid_payloads:
+        try:
+            manifest_from_dict(payload)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {payload}")

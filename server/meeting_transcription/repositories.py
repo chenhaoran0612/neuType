@@ -413,6 +413,7 @@ def create_speaker_anchor(
     anchor_start_ms: int,
     anchor_end_ms: int,
     anchor_duration_ms: int,
+    anchor_storage_path: str,
 ) -> SpeakerAnchor:
     existing = db.scalar(
         select(SpeakerAnchor).where(
@@ -432,6 +433,7 @@ def create_speaker_anchor(
         anchor_start_ms=anchor_start_ms,
         anchor_end_ms=anchor_end_ms,
         anchor_duration_ms=anchor_duration_ms,
+        anchor_storage_path=anchor_storage_path,
     )
     db.add(anchor)
     db.flush()
@@ -529,7 +531,7 @@ def delete_fallback_chunks_for_session(db: Session, session: TranscriptionSessio
     db.flush()
 
 
-def advance_commit_frontier(db: Session) -> bool:
+def advance_commit_frontier(db: Session, *, storage: LocalArtifactStorage) -> bool:
     advanced = False
     for session in _active_sessions(db):
         source_type = selected_source_type_for_session(session)
@@ -552,6 +554,7 @@ def advance_commit_frontier(db: Session) -> bool:
                 db,
                 session=session,
                 chunk=chunk,
+                storage=storage,
             )
             chunk.process_status = CHUNK_PROCESS_COMPLETED
             session.last_committed_chunk_index = next_index
@@ -696,6 +699,7 @@ def _persist_committed_speaker_anchors(
     *,
     session: TranscriptionSession,
     chunk: SessionChunk,
+    storage: LocalArtifactStorage,
 ) -> None:
     normalized_segments = _chunk_normalized_segments(chunk)
     if not normalized_segments:
@@ -729,6 +733,12 @@ def _persist_committed_speaker_anchors(
             anchor_start_ms=candidate.start_ms,
             anchor_end_ms=candidate.end_ms,
             anchor_duration_ms=anchor.anchor_duration_ms,
+            anchor_storage_path=_write_anchor_artifact(
+                storage,
+                session_id=session.session_id,
+                speaker_key=anchor.speaker_key,
+                candidate=candidate,
+            ),
         )
         existing_keys.add(anchor.speaker_key)
 
@@ -740,6 +750,23 @@ def _chunk_normalized_segments(chunk: SessionChunk) -> list[Segment]:
     if not isinstance(payload, list):
         return []
     return segments_from_payload(payload)
+
+
+def _write_anchor_artifact(
+    storage: LocalArtifactStorage,
+    *,
+    session_id: str,
+    speaker_key: str,
+    candidate: Segment,
+) -> str:
+    storage_path = storage.session_path(session_id, "anchors", f"{speaker_key}.wav")
+    payload = (
+        f"ANCHOR|{speaker_key}|{candidate.start_ms}|{candidate.end_ms}|{candidate.text}".encode(
+            "utf-8"
+        )
+    )
+    storage.write_bytes(storage_path, payload)
+    return storage_path
 
 
 def _next_anchor_order(db: Session, session: TranscriptionSession) -> int:

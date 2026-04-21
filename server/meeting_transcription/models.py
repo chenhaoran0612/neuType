@@ -190,6 +190,7 @@ class SpeakerAnchor(Base):
     anchor_start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     anchor_end_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     anchor_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    anchor_storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

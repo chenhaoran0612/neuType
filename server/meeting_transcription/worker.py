@@ -35,7 +35,7 @@ def run_pending_chunk_once(
     storage: LocalArtifactStorage,
 ) -> bool:
     """Run one worker step: advance commits, split fallback audio, or process a chunk."""
-    if repositories.advance_commit_frontier(db):
+    if repositories.advance_commit_frontier(db, storage=storage):
         return True
 
     if repositories.recover_stale_processing_chunks(db):
@@ -51,17 +51,24 @@ def run_pending_chunk_once(
     repositories.mark_chunk_processing(db, chunk)
     session = chunk.session
     prefix_plan = _prepare_prefix_plan(db, session)
+    transcription_audio_path, effective_prefix_manifest = _prepare_transcription_audio(
+        storage,
+        session_id=session.session_id,
+        chunk=chunk,
+        prefix_plan=prefix_plan,
+    )
     try:
         result = transcriber.transcribe_chunk(
             session=session,
             chunk=chunk,
-            audio_path=str(storage.resolve(chunk.storage_path)),
+            audio_path=transcription_audio_path,
             prefix_plan=prefix_plan,
         )
         normalized_segments, effective_manifest = _normalize_result_segments(
             chunk_start_ms=chunk.start_ms,
+            chunk_end_ms=chunk.end_ms,
             result=result,
-            fallback_manifest=prefix_plan.manifest if prefix_plan is not None else None,
+            fallback_manifest=effective_prefix_manifest,
         )
         repositories.mark_chunk_processed(
             db,
@@ -160,15 +167,41 @@ def _prepare_prefix_plan(db: Session, session: TranscriptionSession) -> PrefixPl
             anchor_order=anchor.anchor_order,
             anchor_text=anchor.anchor_text,
             anchor_duration_ms=anchor.anchor_duration_ms,
+            anchor_storage_path=anchor.anchor_storage_path,
         )
         for anchor in repositories.list_speaker_anchors(db, session)
     ]
     return build_prefix_plan(persisted_anchors)
 
 
+def _prepare_transcription_audio(
+    storage: LocalArtifactStorage,
+    *,
+    session_id: str,
+    chunk,
+    prefix_plan: PrefixPlan | None,
+) -> tuple[str, PrefixManifest | None]:
+    raw_audio_path = str(storage.resolve(chunk.storage_path))
+    if prefix_plan is None:
+        return raw_audio_path, None
+
+    prefixed_storage_path = storage.session_path(
+        session_id, "artifacts", "prefix", f"{chunk.chunk_index}.wav"
+    )
+    payload_parts: list[bytes] = []
+    for anchor in prefix_plan.anchors:
+        payload_parts.append(storage.read_bytes(anchor.anchor_storage_path))
+        payload_parts.append(b"|GAP|")
+    payload_parts.append(b"|REAL|")
+    payload_parts.append(storage.read_bytes(chunk.storage_path))
+    storage.write_bytes(prefixed_storage_path, b"".join(payload_parts))
+    return str(storage.resolve(prefixed_storage_path)), prefix_plan.manifest
+
+
 def _normalize_result_segments(
     *,
     chunk_start_ms: int,
+    chunk_end_ms: int,
     result: dict[str, object],
     fallback_manifest: PrefixManifest | None,
 ) -> tuple[list[Segment] | None, PrefixManifest | None]:
@@ -187,9 +220,13 @@ def _normalize_result_segments(
     if manifest is None:
         return (
             remap_real_chunk_segments(
-                segments,
+                _normalize_segments_without_prefix(
+                    segments,
+                    chunk_start_ms=chunk_start_ms,
+                    chunk_end_ms=chunk_end_ms,
+                ),
                 {},
-                chunk_start_ms=chunk_start_ms,
+                chunk_start_ms=0,
                 real_chunk_offset_ms=0,
             ),
             None,
@@ -223,6 +260,28 @@ def _manifest_json(manifest: PrefixManifest | None) -> str | None:
     if manifest is None:
         return None
     return json.dumps(manifest.as_dict())
+
+
+def _normalize_segments_without_prefix(
+    segments: list[Segment],
+    *,
+    chunk_start_ms: int,
+    chunk_end_ms: int,
+) -> list[Segment]:
+    normalized: list[Segment] = []
+    for segment in segments:
+        if segment.start_ms >= chunk_start_ms and segment.end_ms <= chunk_end_ms:
+            normalized.append(segment)
+            continue
+        normalized.extend(
+            remap_real_chunk_segments(
+                [segment],
+                {},
+                chunk_start_ms=chunk_start_ms,
+                real_chunk_offset_ms=0,
+            )
+        )
+    return normalized
 
 
 def _remove_empty_parents(start: Path, root: Path) -> None:

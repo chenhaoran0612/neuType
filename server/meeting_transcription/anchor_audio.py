@@ -66,6 +66,7 @@ class PersistedAnchor:
     anchor_order: int
     anchor_text: str
     anchor_duration_ms: int
+    anchor_storage_path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,10 +141,13 @@ def build_speaker_label_map(
             overlaps_by_label[segment.speaker_label] += overlap_ms
         if not overlaps_by_label:
             continue
-        dominant_label = max(
-            overlaps_by_label.items(),
-            key=lambda item: (item[1], item[0]),
-        )[0]
+        max_overlap = max(overlaps_by_label.values())
+        dominant_labels = [
+            label for label, overlap in overlaps_by_label.items() if overlap == max_overlap
+        ]
+        if len(dominant_labels) != 1:
+            continue
+        dominant_label = dominant_labels[0]
         if dominant_label in ambiguous_labels:
             continue
         existing_key = label_map.get(dominant_label)
@@ -216,15 +220,29 @@ def build_prefix_plan(
 def manifest_from_dict(payload: dict[str, object]) -> PrefixManifest:
     if "real_chunk_offset_ms" not in payload:
         raise ValueError("prefix_manifest missing real_chunk_offset_ms")
+    real_chunk_offset_ms = int(payload["real_chunk_offset_ms"])
+    if real_chunk_offset_ms < 0:
+        raise ValueError("prefix_manifest real_chunk_offset_ms must be >= 0")
     raw_regions = payload.get("anchor_regions", [])
     if not isinstance(raw_regions, list):
         raise ValueError("prefix_manifest anchor_regions must be a list")
     anchor_regions = tuple(_anchor_region_from_payload(region) for region in raw_regions)
     prefix_total_ms = payload.get("prefix_total_ms")
+    parsed_prefix_total_ms = (
+        int(prefix_total_ms) if prefix_total_ms is not None else None
+    )
+    if parsed_prefix_total_ms is not None and parsed_prefix_total_ms < 0:
+        raise ValueError("prefix_manifest prefix_total_ms must be >= 0")
+    if parsed_prefix_total_ms is not None:
+        for region in anchor_regions:
+            if region.end_ms > parsed_prefix_total_ms:
+                raise ValueError(
+                    "prefix_manifest anchor region may not extend past prefix_total_ms"
+                )
     return PrefixManifest(
-        real_chunk_offset_ms=int(payload["real_chunk_offset_ms"]),
+        real_chunk_offset_ms=real_chunk_offset_ms,
         anchor_regions=anchor_regions,
-        prefix_total_ms=int(prefix_total_ms) if prefix_total_ms is not None else None,
+        prefix_total_ms=parsed_prefix_total_ms,
     )
 
 
@@ -283,6 +301,7 @@ def anchor_from_segment(
         anchor_order=anchor_order,
         anchor_text=segment.text,
         anchor_duration_ms=segment.duration_ms,
+        anchor_storage_path="",
     )
 
 
@@ -293,10 +312,16 @@ def _normalize_text(text: str) -> str:
 def _anchor_region_from_payload(region: object) -> AnchorRegion:
     if not isinstance(region, dict):
         raise ValueError("anchor region entries must be objects")
+    start_ms = int(region["start_ms"])
+    end_ms = int(region["end_ms"])
+    if start_ms < 0 or end_ms < 0:
+        raise ValueError("anchor region start/end must be >= 0")
+    if end_ms < start_ms:
+        raise ValueError("anchor region end_ms must be >= start_ms")
     return AnchorRegion(
         speaker_key=str(region["speaker_key"]),
-        start_ms=int(region["start_ms"]),
-        end_ms=int(region["end_ms"]),
+        start_ms=start_ms,
+        end_ms=end_ms,
     )
 
 
