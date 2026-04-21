@@ -94,7 +94,7 @@ def test_build_label_map_and_remap_real_chunk_segments():
 
 
 
-def test_build_label_map_ignores_later_anchor_collision_for_same_transient_label():
+def test_build_label_map_invalidates_transient_label_collision():
     manifest = PrefixManifest(
         real_chunk_offset_ms=3000,
         anchor_regions=(
@@ -109,7 +109,7 @@ def test_build_label_map_ignores_later_anchor_collision_for_same_transient_label
 
     label_map = build_speaker_label_map(segments, manifest)
 
-    assert label_map == {"Speaker 2": "speaker_a"}
+    assert label_map == {}
 
 
 

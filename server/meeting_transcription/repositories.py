@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +14,13 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from meeting_transcription.anchor_audio import (
+    Segment,
+    anchor_from_segment,
+    segments_from_payload,
+    select_anchor_candidate,
+    stable_speaker_key,
+)
 from meeting_transcription.models import (
     SessionChunk,
     SpeakerAnchor,
@@ -539,6 +548,11 @@ def advance_commit_frontier(db: Session) -> bool:
             if chunk is None or chunk.process_status != CHUNK_PROCESS_PROCESSED:
                 break
 
+            _persist_committed_speaker_anchors(
+                db,
+                session=session,
+                chunk=chunk,
+            )
             chunk.process_status = CHUNK_PROCESS_COMPLETED
             session.last_committed_chunk_index = next_index
             next_index += 1
@@ -675,6 +689,57 @@ def _maybe_complete_session(
 
     session.status = "completed"
     session.finalized_at = session.finalized_at or utcnow()
+
+
+def _persist_committed_speaker_anchors(
+    db: Session,
+    *,
+    session: TranscriptionSession,
+    chunk: SessionChunk,
+) -> None:
+    normalized_segments = _chunk_normalized_segments(chunk)
+    if not normalized_segments:
+        return
+
+    existing_keys = {anchor.speaker_key for anchor in list_speaker_anchors(db, session)}
+    speaker_segments: OrderedDict[str, list[Segment]] = OrderedDict()
+    for segment in sorted(normalized_segments, key=lambda item: (item.start_ms, item.end_ms)):
+        speaker_key = segment.speaker_key or stable_speaker_key(segment.speaker_label)
+        if not speaker_key or speaker_key in existing_keys:
+            continue
+        speaker_segments.setdefault(speaker_key, []).append(segment)
+
+    for speaker_key, segments in speaker_segments.items():
+        candidate = select_anchor_candidate(segments, chunk_end_ms=chunk.end_ms)
+        if candidate is None:
+            continue
+        anchor = anchor_from_segment(
+            candidate,
+            anchor_order=0,
+            fallback_speaker_key=speaker_key,
+        )
+        if anchor is None:
+            continue
+        create_speaker_anchor(
+            db,
+            session=session,
+            speaker_key=anchor.speaker_key,
+            source_chunk_index=chunk.chunk_index,
+            anchor_text=anchor.anchor_text,
+            anchor_start_ms=candidate.start_ms,
+            anchor_end_ms=candidate.end_ms,
+            anchor_duration_ms=anchor.anchor_duration_ms,
+        )
+        existing_keys.add(anchor.speaker_key)
+
+
+def _chunk_normalized_segments(chunk: SessionChunk) -> list[Segment]:
+    if not chunk.normalized_segments_json:
+        return []
+    payload = json.loads(chunk.normalized_segments_json)
+    if not isinstance(payload, list):
+        return []
+    return segments_from_payload(payload)
 
 
 def _next_anchor_order(db: Session, session: TranscriptionSession) -> int:

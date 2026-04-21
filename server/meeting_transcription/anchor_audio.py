@@ -123,6 +123,7 @@ def build_speaker_label_map(
 ) -> dict[str, str]:
     """Map transient model speaker labels back to persisted speaker keys."""
     label_map: dict[str, str] = {}
+    ambiguous_labels: set[str] = set()
     for anchor in manifest.anchor_regions:
         overlaps_by_label: dict[str, int] = defaultdict(int)
         for segment in segments:
@@ -143,9 +144,15 @@ def build_speaker_label_map(
             overlaps_by_label.items(),
             key=lambda item: (item[1], item[0]),
         )[0]
-        if dominant_label in label_map:
+        if dominant_label in ambiguous_labels:
             continue
-        label_map[dominant_label] = anchor.speaker_key
+        existing_key = label_map.get(dominant_label)
+        if existing_key is None:
+            label_map[dominant_label] = anchor.speaker_key
+            continue
+        if existing_key != anchor.speaker_key:
+            ambiguous_labels.add(dominant_label)
+            del label_map[dominant_label]
     return label_map
 
 

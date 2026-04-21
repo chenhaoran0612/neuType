@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 import json
 from pathlib import Path
 
@@ -15,15 +14,12 @@ from meeting_transcription.anchor_audio import (
     PrefixManifest,
     PrefixPlan,
     Segment,
-    anchor_from_segment,
     build_prefix_plan,
     build_speaker_label_map,
     manifest_from_dict,
     remap_real_chunk_segments,
     segments_from_payload,
     segments_to_payload,
-    select_anchor_candidate,
-    stable_speaker_key,
     strip_prefix_segments,
 )
 from meeting_transcription.audio_chunks import split_full_audio_into_chunks
@@ -66,13 +62,6 @@ def run_pending_chunk_once(
             chunk_start_ms=chunk.start_ms,
             result=result,
             fallback_manifest=prefix_plan.manifest if prefix_plan is not None else None,
-        )
-        _persist_new_speaker_anchors(
-            db,
-            session=session,
-            chunk_index=chunk.chunk_index,
-            chunk_end_ms=chunk.end_ms,
-            normalized_segments=normalized_segments,
         )
         repositories.mark_chunk_processed(
             db,
@@ -177,51 +166,6 @@ def _prepare_prefix_plan(db: Session, session: TranscriptionSession) -> PrefixPl
     return build_prefix_plan(persisted_anchors)
 
 
-def _persist_new_speaker_anchors(
-    db: Session,
-    *,
-    session: TranscriptionSession,
-    chunk_index: int,
-    chunk_end_ms: int,
-    normalized_segments: list[Segment] | None,
-) -> None:
-    if not normalized_segments:
-        return
-
-    existing_keys = {
-        anchor.speaker_key for anchor in repositories.list_speaker_anchors(db, session)
-    }
-    speaker_segments: OrderedDict[str, list[Segment]] = OrderedDict()
-    for segment in sorted(normalized_segments, key=lambda item: (item.start_ms, item.end_ms)):
-        speaker_key = segment.speaker_key or stable_speaker_key(segment.speaker_label)
-        if not speaker_key or speaker_key in existing_keys:
-            continue
-        speaker_segments.setdefault(speaker_key, []).append(segment)
-
-    for speaker_key, segments in speaker_segments.items():
-        candidate = select_anchor_candidate(segments, chunk_end_ms=chunk_end_ms)
-        if candidate is None:
-            continue
-        anchor = anchor_from_segment(
-            candidate,
-            anchor_order=0,
-            fallback_speaker_key=speaker_key,
-        )
-        if anchor is None:
-            continue
-        repositories.create_speaker_anchor(
-            db,
-            session=session,
-            speaker_key=anchor.speaker_key,
-            source_chunk_index=chunk_index,
-            anchor_text=anchor.anchor_text,
-            anchor_start_ms=candidate.start_ms,
-            anchor_end_ms=candidate.end_ms,
-            anchor_duration_ms=anchor.anchor_duration_ms,
-        )
-        existing_keys.add(anchor.speaker_key)
-
-
 def _normalize_result_segments(
     *,
     chunk_start_ms: int,
@@ -241,7 +185,15 @@ def _normalize_result_segments(
     segments = segments_from_payload(segments_payload)
     manifest = _coerce_manifest_payload(manifest_payload, fallback_manifest)
     if manifest is None:
-        return segments, None
+        return (
+            remap_real_chunk_segments(
+                segments,
+                {},
+                chunk_start_ms=chunk_start_ms,
+                real_chunk_offset_ms=0,
+            ),
+            None,
+        )
 
     label_map = build_speaker_label_map(segments, manifest)
     kept_segments = strip_prefix_segments(segments, manifest)

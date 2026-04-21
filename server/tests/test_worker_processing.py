@@ -109,6 +109,23 @@ class WorkerHarness:
         finally:
             db.close()
 
+    def seed_processed_normalized_result(
+        self,
+        public_session: TranscriptionSession,
+        *,
+        chunk_index: int,
+        normalized_segments: list[dict[str, object]],
+    ) -> None:
+        db = self.session_factory()
+        try:
+            chunk = self._fetch_chunk(db, public_session.session_id, chunk_index, "live_chunk")
+            chunk.process_status = "processed"
+            chunk.result_segment_count = len(normalized_segments)
+            chunk.normalized_segments_json = json.dumps(normalized_segments)
+            db.commit()
+        finally:
+            db.close()
+
     def seed_session_with_missing_live_chunks(self) -> TranscriptionSession:
         db = self.session_factory()
         try:
@@ -420,12 +437,14 @@ def test_worker_creates_anchor_then_uses_prefix_plan_and_persists_normalized_seg
     transcriber = PrefixAwareTranscriber()
 
     assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.list_speaker_anchors(session.session_id) == []
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
     anchors = worker_harness.list_speaker_anchors(session.session_id)
     assert [(anchor.speaker_key, anchor.anchor_text) for anchor in anchors] == [
         ("speaker_1", "我们开始今天的周会")
     ]
 
-    assert worker_harness.run_once(transcriber=transcriber) is True
     assert worker_harness.run_once(transcriber=transcriber) is True
 
     second_chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
@@ -476,6 +495,103 @@ def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: W
     assert chunk.retry_count == 1
     assert "not-an-int" in chunk.error_message
     assert chunk.normalized_segments_json is None
+
+
+def test_out_of_order_processed_chunk_does_not_create_anchor_before_frontier_advances(
+    worker_harness: WorkerHarness,
+):
+    class ChunkZeroTranscriber:
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, audio_path, prefix_plan
+            assert chunk.chunk_index == 0
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "我们开始今天的周会",
+                        "start_ms": 500,
+                        "end_ms": 3600,
+                        "speaker_label": "Speaker 1",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    worker_harness.seed_processed_normalized_result(
+        session,
+        chunk_index=1,
+        normalized_segments=[
+            {
+                "text": "第二位说话人的有效锚点",
+                "start_ms": 300500,
+                "end_ms": 303500,
+                "speaker_label": "Speaker 2",
+                "speaker_key": "speaker_2",
+            }
+        ],
+    )
+
+    assert worker_harness.run_once(transcriber=ChunkZeroTranscriber()) is True
+    assert worker_harness.list_speaker_anchors(session.session_id) == []
+
+    assert worker_harness.run_once(transcriber=ChunkZeroTranscriber()) is True
+
+    anchors = worker_harness.list_speaker_anchors(session.session_id)
+    refreshed = worker_harness.fetch_session(session.session_id)
+    assert refreshed.last_committed_chunk_index == 1
+    assert [(anchor.speaker_key, anchor.anchor_text) for anchor in anchors] == [
+        ("speaker_1", "我们开始今天的周会"),
+        ("speaker_2", "第二位说话人的有效锚点"),
+    ]
+
+
+def test_worker_remaps_no_prefix_chunk_segments_to_absolute_timeline(
+    worker_harness: WorkerHarness,
+):
+    class LocalTimestampTranscriber:
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, audio_path, prefix_plan
+            assert chunk.chunk_index == 1
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "local time",
+                        "start_ms": 100,
+                        "end_ms": 1600,
+                        "speaker_label": "Speaker 3",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[1])
+
+    assert worker_harness.run_once(transcriber=LocalTimestampTranscriber()) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    assert json.loads(chunk.normalized_segments_json) == [
+        {
+            "text": "local time",
+            "start_ms": 300100,
+            "end_ms": 301600,
+            "speaker_label": "Speaker 3",
+            "speaker_key": None,
+        }
+    ]
 
 
 def test_worker_only_commits_next_chunk_in_order(worker_harness: WorkerHarness):
