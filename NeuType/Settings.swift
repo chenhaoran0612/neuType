@@ -457,7 +457,7 @@ private struct GeneralSettingsTabView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Meeting transcription uses the remote VibeVoice ASR OpenAI-compatible Chat Completions API. Base URL usually stays as https://tokenhubpro.com. You can also paste the full endpoint https://tokenhubpro.com/v1/chat/completions directly, and API Prefix is typically left empty.")
+                        Text("Meeting transcription reuses this server base URL and API key for both direct VibeVoice requests and the remote meeting session API. Point Base URL at the server root when possible; if you paste a full /v1/chat/completions endpoint, NeuType will reuse that host/path prefix for session routes. API Prefix is optional, and legacy gradio_api is ignored for remote session routes.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 

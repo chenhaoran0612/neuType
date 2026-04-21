@@ -20,6 +20,7 @@ from meeting_transcription.schemas import (
     FinalizeSessionResponse,
     SessionStatusResponse,
     UploadChunkResponse,
+    UploadFullAudioResponse,
     envelope,
 )
 from meeting_transcription.storage import LocalArtifactStorage
@@ -136,6 +137,63 @@ async def upload_chunk(
     return JSONResponse(
         status_code=status_code,
         content=jsonable_encoder(envelope(stored_chunk.response_model())),
+    )
+
+
+@router.put(
+    "/{session_id}/full-audio",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Envelope[UploadFullAudioResponse],
+    responses={
+        status.HTTP_200_OK: {"model": Envelope[UploadFullAudioResponse]},
+        status.HTTP_400_BAD_REQUEST: {"model": ErrorEnvelope},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorEnvelope},
+        status.HTTP_409_CONFLICT: {"model": ErrorEnvelope},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorEnvelope},
+    },
+)
+async def upload_full_audio(
+    session_id: str,
+    audio_file: Annotated[UploadFile, File(...)],
+    sha256: Annotated[str, Form(min_length=1)],
+    duration_ms: Annotated[int, Form(gt=0)],
+    mime_type: Annotated[str, Form(min_length=1)],
+    file_size_bytes: Annotated[int, Form(ge=0)],
+    db: Session = Depends(get_db),
+    storage: LocalArtifactStorage = Depends(get_storage),
+):
+    """Upload the final full meeting audio for fallback processing."""
+    try:
+        stored_audio = repositories.store_full_audio(
+            db,
+            storage=storage,
+            public_session_id=session_id,
+            sha256=sha256,
+            duration_ms=duration_ms,
+            mime_type=mime_type,
+            file_size_bytes=file_size_bytes,
+            filename=audio_file.filename or "recording.bin",
+            audio_bytes=await audio_file.read(),
+        )
+    except repositories.InvalidChunkMetadataError as exc:
+        return error_response(status.HTTP_400_BAD_REQUEST, exc.code, exc.message)
+    except repositories.SessionNotFoundError:
+        return error_response(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"session {session_id} does not exist",
+        )
+    except repositories.FullAudioHashConflictError as exc:
+        return error_response(
+            status.HTTP_409_CONFLICT,
+            "full_audio_hash_conflict",
+            str(exc),
+        )
+
+    status_code = status.HTTP_200_OK if stored_audio.reused else status.HTTP_201_CREATED
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(envelope(stored_audio.response_model())),
     )
 
 

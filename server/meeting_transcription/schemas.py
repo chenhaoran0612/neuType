@@ -82,6 +82,14 @@ class UploadChunkResponse(BaseModel):
     process_status: str
 
 
+class UploadFullAudioResponse(BaseModel):
+    """Response payload for full-audio fallback uploads."""
+
+    session_id: str
+    status: str
+    input_mode: str
+
+
 class FinalizeSessionRequest(BaseModel):
     """Request payload for marking a session finalized."""
 
@@ -100,6 +108,16 @@ class FinalizeSessionResponse(BaseModel):
     missing_chunk_indexes: list[int] = Field(default_factory=list)
 
 
+class TranscriptSegmentResponse(BaseModel):
+    """Response payload for one finalized transcript segment."""
+
+    sequence: int
+    speaker_label: str | None = None
+    start_ms: int
+    end_ms: int
+    text: str
+
+
 class SessionStatusResponse(BaseModel):
     """Response payload for polling session state."""
 
@@ -110,3 +128,5 @@ class SessionStatusResponse(BaseModel):
     chunk_overlap_ms: int
     expected_chunk_count: int | None
     uploaded_chunk_count: int
+    full_text: str | None = None
+    segments: list[TranscriptSegmentResponse] | None = None

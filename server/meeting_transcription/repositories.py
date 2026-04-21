@@ -33,7 +33,9 @@ from meeting_transcription.schemas import (
     FinalizeSessionRequest,
     FinalizeSessionResponse,
     SessionStatusResponse,
+    TranscriptSegmentResponse,
     UploadChunkResponse,
+    UploadFullAudioResponse,
 )
 from meeting_transcription.storage import LocalArtifactStorage
 
@@ -61,6 +63,10 @@ class SessionNotFoundError(Exception):
 
 class ChunkHashConflictError(Exception):
     """Raised when a live chunk index already exists with a different hash."""
+
+
+class FullAudioHashConflictError(Exception):
+    """Raised when a full-audio fallback upload conflicts with an existing file."""
 
 
 class InvalidChunkMetadataError(Exception):
@@ -94,6 +100,19 @@ class ChunkRecord:
             status="accepted",
             upload_status=self.chunk.upload_status,
             process_status=self.chunk.process_status,
+        )
+
+
+@dataclass(slots=True)
+class FullAudioRecord:
+    session: TranscriptionSession
+    reused: bool
+
+    def response_model(self) -> UploadFullAudioResponse:
+        return UploadFullAudioResponse(
+            session_id=self.session.session_id,
+            status="full_audio_uploaded",
+            input_mode=FULL_AUDIO_FALLBACK_INPUT_MODE,
         )
 
 
@@ -225,6 +244,63 @@ def store_live_chunk(
     return ChunkRecord(session=session, chunk=chunk, reused=False)
 
 
+def store_full_audio(
+    db: Session,
+    *,
+    storage: LocalArtifactStorage,
+    public_session_id: str,
+    sha256: str,
+    duration_ms: int,
+    mime_type: str,
+    file_size_bytes: int,
+    filename: str,
+    audio_bytes: bytes,
+) -> FullAudioRecord:
+    del duration_ms, mime_type
+
+    actual_sha256 = hashlib.sha256(audio_bytes).hexdigest()
+    actual_file_size = len(audio_bytes)
+    if sha256 != actual_sha256:
+        raise InvalidChunkMetadataError(
+            "full_audio_sha256_mismatch",
+            "client sha256 does not match uploaded full audio bytes",
+        )
+    if file_size_bytes != actual_file_size:
+        raise InvalidChunkMetadataError(
+            "full_audio_size_mismatch",
+            "client file_size_bytes does not match uploaded full audio bytes",
+        )
+
+    session = _get_session_by_public_id(db, public_session_id)
+    if session.final_audio_uploaded and session.final_audio_sha256:
+        if session.final_audio_sha256 != actual_sha256:
+            raise FullAudioHashConflictError(
+                "full audio already exists with a different sha256"
+            )
+        if session.final_audio_storage_path and storage.exists(session.final_audio_storage_path):
+            return FullAudioRecord(session=session, reused=True)
+
+    suffix = Path(filename).suffix or ".bin"
+    storage_path = storage.session_path(
+        session.session_id, "full-audio", f"recording{suffix}"
+    )
+    storage.write_bytes(storage_path, audio_bytes)
+    try:
+        session.final_audio_uploaded = True
+        session.final_audio_sha256 = actual_sha256
+        session.final_audio_storage_path = storage_path
+        db.commit()
+    except Exception:
+        db.rollback()
+        artifact_path = storage.resolve(storage_path)
+        if artifact_path.exists():
+            artifact_path.unlink()
+        raise
+
+    db.refresh(session)
+    return FullAudioRecord(session=session, reused=False)
+
+
 def get_session_status(db: Session, public_session_id: str) -> SessionStatusResponse:
     session = _get_session_by_public_id(db, public_session_id)
     uploaded_chunk_count = len(
@@ -235,6 +311,7 @@ def get_session_status(db: Session, public_session_id: str) -> SessionStatusResp
             and chunk.upload_status == UPLOAD_STATUS_UPLOADED
         ]
     )
+    transcript_segments = _completed_transcript_segments(session)
     return SessionStatusResponse(
         session_id=session.session_id,
         status=session.status,
@@ -243,6 +320,12 @@ def get_session_status(db: Session, public_session_id: str) -> SessionStatusResp
         chunk_overlap_ms=session.chunk_overlap_ms,
         expected_chunk_count=session.expected_chunk_count,
         uploaded_chunk_count=uploaded_chunk_count,
+        full_text=(
+            " ".join(segment.text for segment in transcript_segments if segment.text)
+            if transcript_segments is not None
+            else None
+        ),
+        segments=transcript_segments,
     )
 
 
@@ -747,6 +830,37 @@ def _chunk_normalized_segments(chunk: SessionChunk) -> list[Segment]:
     if not isinstance(payload, list):
         return []
     return segments_from_payload(payload)
+
+
+def _completed_transcript_segments(
+    session: TranscriptionSession,
+) -> list[TranscriptSegmentResponse] | None:
+    if session.status != "completed":
+        return None
+
+    source_type = selected_source_type_for_session(session)
+    rows: list[TranscriptSegmentResponse] = []
+    completed_chunks = sorted(
+        (
+            chunk
+            for chunk in session.chunks
+            if chunk.source_type == source_type
+            and chunk.process_status == CHUNK_PROCESS_COMPLETED
+        ),
+        key=lambda chunk: chunk.chunk_index,
+    )
+    for chunk in completed_chunks:
+        for segment in _chunk_normalized_segments(chunk):
+            rows.append(
+                TranscriptSegmentResponse(
+                    sequence=len(rows),
+                    speaker_label=segment.speaker_label,
+                    start_ms=segment.start_ms,
+                    end_ms=segment.end_ms,
+                    text=segment.text,
+                )
+            )
+    return rows
 
 
 def _write_anchor_artifact(

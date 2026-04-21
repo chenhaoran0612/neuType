@@ -23,6 +23,28 @@ struct MeetingVibeVoiceConfig: Equatable, Sendable {
         return endpointURL(path: "v1/chat/completions", ignoreLegacyGradioPrefix: true)
     }
 
+    func remoteMeetingTranscriptionSessionsURL() -> URL? {
+        remoteMeetingTranscriptionEndpointURL(path: "api/meeting-transcription/sessions")
+    }
+
+    func remoteMeetingTranscriptionSessionURL(sessionID: String) -> URL? {
+        remoteMeetingTranscriptionSessionsURL()?.appending(path: sessionID)
+    }
+
+    func remoteMeetingTranscriptionChunkUploadURL(sessionID: String, chunkIndex: Int) -> URL? {
+        remoteMeetingTranscriptionSessionURL(sessionID: sessionID)?
+            .appending(path: "chunks")
+            .appending(path: String(chunkIndex))
+    }
+
+    func remoteMeetingTranscriptionFinalizeURL(sessionID: String) -> URL? {
+        remoteMeetingTranscriptionSessionURL(sessionID: sessionID)?.appending(path: "finalize")
+    }
+
+    func remoteMeetingTranscriptionFullAudioUploadURL(sessionID: String) -> URL? {
+        remoteMeetingTranscriptionSessionURL(sessionID: sessionID)?.appending(path: "full-audio")
+    }
+
     var trimmedAPIKey: String {
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -48,6 +70,35 @@ struct MeetingVibeVoiceConfig: Equatable, Sendable {
             : "\(normalizedPrefix)/\(normalizedPath)"
 
         return URL(string: normalizedBase)?.appending(path: fullPath)
+    }
+
+    private func remoteMeetingTranscriptionEndpointURL(path: String) -> URL? {
+        let baseURLString = normalizedRemoteMeetingBaseURLString()
+        guard URL(string: baseURLString) != nil else {
+            return nil
+        }
+
+        let rawPrefix = apiPrefix
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedPrefix = rawPrefix == "gradio_api" ? "" : rawPrefix
+        let normalizedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let fullPath = normalizedPrefix.isEmpty
+            ? normalizedPath
+            : "\(normalizedPrefix)/\(normalizedPath)"
+
+        let normalizedBase = baseURLString.hasSuffix("/") ? baseURLString : "\(baseURLString)/"
+        return URL(string: normalizedBase)?.appending(path: fullPath)
+    }
+
+    private func normalizedRemoteMeetingBaseURLString() -> String {
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chatCompletionsSuffix = "/v1/chat/completions"
+        guard trimmedBaseURL.lowercased().hasSuffix(chatCompletionsSuffix) else {
+            return trimmedBaseURL
+        }
+
+        return String(trimmedBaseURL.dropLast(chatCompletionsSuffix.count))
     }
 
     func combinedContextInfo(hotwords: [String]) -> String {
