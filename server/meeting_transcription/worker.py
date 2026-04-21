@@ -51,14 +51,14 @@ def run_pending_chunk_once(
 
     repositories.mark_chunk_processing(db, chunk)
     session = chunk.session
-    prefix_plan = _prepare_prefix_plan(db, session, storage=storage)
-    transcription_audio_path, effective_prefix_manifest = _prepare_transcription_audio(
-        storage,
-        session_id=session.session_id,
-        chunk=chunk,
-        prefix_plan=prefix_plan,
-    )
     try:
+        prefix_plan = _prepare_prefix_plan(db, session, storage=storage)
+        transcription_audio_path, effective_prefix_manifest = _prepare_transcription_audio(
+            storage,
+            session_id=session.session_id,
+            chunk=chunk,
+            prefix_plan=prefix_plan,
+        )
         result = transcriber.transcribe_chunk(
             session=session,
             chunk=chunk,
@@ -80,8 +80,7 @@ def run_pending_chunk_once(
                 else int(result.get("segment_count", 0))
             ),
             prepared_prefix_manifest_json=_manifest_json(
-                effective_manifest
-                or (prefix_plan.manifest if prefix_plan is not None else None)
+                effective_manifest or effective_prefix_manifest
             ),
             normalized_segments_json=(
                 json.dumps(segments_to_payload(normalized_segments))
@@ -195,11 +194,7 @@ def _prepare_transcription_audio(
     _write_prefixed_wav(
         storage,
         prefixed_storage_path=prefixed_storage_path,
-        anchor_paths=[
-            anchor.anchor_storage_path
-            for anchor in prefix_plan.anchors
-            if anchor.anchor_storage_path and storage.exists(anchor.anchor_storage_path)
-        ],
+        anchor_paths=[anchor.anchor_storage_path for anchor in prefix_plan.anchors],
         real_chunk_storage_path=chunk.storage_path,
     )
     return str(storage.resolve(prefixed_storage_path)), prefix_plan.manifest

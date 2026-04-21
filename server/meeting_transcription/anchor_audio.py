@@ -290,26 +290,6 @@ def stable_speaker_key(speaker_label: str | None) -> str | None:
     return collapsed or None
 
 
-def anchor_from_segment(
-    segment: Segment,
-    *,
-    anchor_order: int,
-    fallback_speaker_key: str | None = None,
-) -> PersistedAnchor | None:
-    speaker_key = segment.speaker_key or fallback_speaker_key or stable_speaker_key(
-        segment.speaker_label
-    )
-    if not speaker_key:
-        return None
-    return PersistedAnchor(
-        speaker_key=speaker_key,
-        anchor_order=anchor_order,
-        anchor_text=segment.text,
-        anchor_duration_ms=segment.duration_ms,
-        anchor_storage_path="",
-    )
-
-
 def _normalize_text(text: str) -> str:
     return "".join(text.split()).strip("，。！？,.!?：:；;、")
 

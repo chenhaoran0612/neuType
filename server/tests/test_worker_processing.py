@@ -12,6 +12,7 @@ import pytest
 from meeting_transcription.db import create_engine, create_session_factory
 from meeting_transcription.models import Base, SessionChunk, SpeakerAnchor, TranscriptionSession, utcnow
 from meeting_transcription.storage import LocalArtifactStorage
+from meeting_transcription import worker as worker_module
 from meeting_transcription.worker import run_pending_chunk_once
 
 
@@ -553,6 +554,126 @@ def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_an
     expected_offset_ms = anchors[0].anchor_duration_ms + 800
     assert prefixed_call["prefix_plan"].manifest.real_chunk_offset_ms == expected_offset_ms
     assert prefixed_duration_ms == expected_offset_ms + 300000
+
+
+def test_worker_resets_chunk_when_planned_anchor_disappears_before_prefix_write(
+    worker_harness: WorkerHarness,
+    monkeypatch,
+):
+    class RecordingTranscriber:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, audio_path, prefix_plan
+            self.calls += 1
+            if chunk.chunk_index == 0:
+                return {
+                    "segment_count": 1,
+                    "segments": [
+                        {
+                            "text": "我们开始今天的周会",
+                            "start_ms": 500,
+                            "end_ms": 3600,
+                            "speaker_label": "Speaker 1",
+                        }
+                    ],
+                }
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "should not reach transcriber",
+                        "start_ms": 100,
+                        "end_ms": 900,
+                        "speaker_label": "Speaker 9",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    transcriber = RecordingTranscriber()
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    real_prepare_prefix_plan = worker_module._prepare_prefix_plan
+
+    def delete_anchor_after_plan(db, session_obj, *, storage):
+        plan = real_prepare_prefix_plan(db, session_obj, storage=storage)
+        assert plan is not None
+        for anchor in plan.anchors:
+            storage.resolve(anchor.anchor_storage_path).unlink()
+        return plan
+
+    monkeypatch.setattr(worker_module, "_prepare_prefix_plan", delete_anchor_after_plan)
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    assert transcriber.calls == 1
+    assert chunk.process_status == "pending"
+    assert chunk.retry_count == 1
+    assert chunk.normalized_segments_json is None
+    assert "speaker_1.wav" in (chunk.error_message or "")
+
+
+def test_worker_resets_chunk_when_prefix_artifact_preparation_raises(
+    worker_harness: WorkerHarness,
+    monkeypatch,
+):
+    class PrefixAwareTranscriber:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, audio_path, prefix_plan
+            self.calls += 1
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "我们开始今天的周会",
+                        "start_ms": 500,
+                        "end_ms": 3600,
+                        "speaker_label": "Speaker 1" if chunk.chunk_index == 0 else "Speaker 9",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    transcriber = PrefixAwareTranscriber()
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    def explode_prefix_write(*args, **kwargs):
+        raise ValueError("prefix write failed")
+
+    monkeypatch.setattr(worker_module, "_write_prefixed_wav", explode_prefix_write)
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    assert transcriber.calls == 1
+    assert chunk.process_status == "pending"
+    assert chunk.retry_count == 1
+    assert chunk.normalized_segments_json is None
+    assert chunk.error_message == "prefix write failed"
 
 
 def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: WorkerHarness):
