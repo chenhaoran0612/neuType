@@ -331,8 +331,12 @@ class WorkerHarness:
 
     @staticmethod
     def _wav_bytes(tag: bytes) -> bytes:
+        return WorkerHarness._wav_bytes_with_duration(300000, tag)
+
+    @staticmethod
+    def _wav_bytes_with_duration(duration_ms: int, tag: bytes) -> bytes:
         buffer = io.BytesIO()
-        frame_count = 300000
+        frame_count = duration_ms
         with wave.open(buffer, "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
@@ -554,6 +558,87 @@ def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_an
     expected_offset_ms = anchors[0].anchor_duration_ms + 800
     assert prefixed_call["prefix_plan"].manifest.real_chunk_offset_ms == expected_offset_ms
     assert prefixed_duration_ms == expected_offset_ms + 300000
+
+
+def test_worker_rebuilds_prefix_manifest_from_actual_anchor_wav_duration(
+    worker_harness: WorkerHarness,
+):
+    class RecordingTranscriber:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session
+            self.calls.append(
+                {
+                    "chunk_index": chunk.chunk_index,
+                    "audio_path": audio_path,
+                    "prefix_plan": prefix_plan,
+                }
+            )
+            if chunk.chunk_index == 0:
+                return {
+                    "segment_count": 1,
+                    "segments": [
+                        {
+                            "text": "我们开始今天的周会",
+                            "start_ms": 500,
+                            "end_ms": 3600,
+                            "speaker_label": "Speaker 1",
+                        }
+                    ],
+                }
+            assert prefix_plan is not None
+            return {
+                "segment_count": 1,
+                "segments": [
+                    {
+                        "text": "real after resized anchor",
+                        "start_ms": prefix_plan.manifest.real_chunk_offset_ms + 300,
+                        "end_ms": prefix_plan.manifest.real_chunk_offset_ms + 1100,
+                        "speaker_label": "Speaker 9",
+                    }
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    transcriber = RecordingTranscriber()
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    anchor = worker_harness.list_speaker_anchors(session.session_id)[0]
+    worker_harness.storage.write_bytes(
+        anchor.anchor_storage_path,
+        worker_harness._wav_bytes_with_duration(500, b"short-anchor"),
+    )
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    prefixed_call = transcriber.calls[1]
+    assert prefixed_call["prefix_plan"].manifest.real_chunk_offset_ms == 1300
+    with wave.open(prefixed_call["audio_path"], "rb") as prefixed_wav:
+        assert prefixed_wav.getnframes() == 301300
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    prepared_manifest = json.loads(chunk.prepared_prefix_manifest_json)
+    assert prepared_manifest["real_chunk_offset_ms"] == 1300
+    assert json.loads(chunk.normalized_segments_json) == [
+        {
+            "text": "real after resized anchor",
+            "start_ms": 300300,
+            "end_ms": 301100,
+            "speaker_label": "Speaker 9",
+            "speaker_key": None,
+        }
+    ]
 
 
 def test_worker_resets_chunk_when_planned_anchor_disappears_before_prefix_write(

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from meeting_transcription import repositories
 from meeting_transcription.anchor_audio import (
+    AnchorRegion,
     PersistedAnchor,
     PrefixManifest,
     PrefixPlan,
@@ -53,7 +54,7 @@ def run_pending_chunk_once(
     session = chunk.session
     try:
         prefix_plan = _prepare_prefix_plan(db, session, storage=storage)
-        transcription_audio_path, effective_prefix_manifest = _prepare_transcription_audio(
+        transcription_audio_path, effective_prefix_plan = _prepare_transcription_audio(
             storage,
             session_id=session.session_id,
             chunk=chunk,
@@ -63,13 +64,17 @@ def run_pending_chunk_once(
             session=session,
             chunk=chunk,
             audio_path=transcription_audio_path,
-            prefix_plan=prefix_plan,
+            prefix_plan=effective_prefix_plan,
         )
         normalized_segments, effective_manifest = _normalize_result_segments(
             chunk_start_ms=chunk.start_ms,
             chunk_end_ms=chunk.end_ms,
             result=result,
-            fallback_manifest=effective_prefix_manifest,
+            fallback_manifest=(
+                effective_prefix_plan.manifest
+                if effective_prefix_plan is not None
+                else None
+            ),
         )
         repositories.mark_chunk_processed(
             db,
@@ -80,7 +85,12 @@ def run_pending_chunk_once(
                 else int(result.get("segment_count", 0))
             ),
             prepared_prefix_manifest_json=_manifest_json(
-                effective_manifest or effective_prefix_manifest
+                effective_manifest
+                or (
+                    effective_prefix_plan.manifest
+                    if effective_prefix_plan is not None
+                    else None
+                )
             ),
             normalized_segments_json=(
                 json.dumps(segments_to_payload(normalized_segments))
@@ -183,7 +193,7 @@ def _prepare_transcription_audio(
     session_id: str,
     chunk,
     prefix_plan: PrefixPlan | None,
-) -> tuple[str, PrefixManifest | None]:
+) -> tuple[str, PrefixPlan | None]:
     raw_audio_path = str(storage.resolve(chunk.storage_path))
     if prefix_plan is None:
         return raw_audio_path, None
@@ -191,13 +201,16 @@ def _prepare_transcription_audio(
     prefixed_storage_path = storage.session_path(
         session_id, "artifacts", "prefix", f"{chunk.chunk_index}.wav"
     )
-    _write_prefixed_wav(
+    effective_manifest = _write_prefixed_wav(
         storage,
         prefixed_storage_path=prefixed_storage_path,
-        anchor_paths=[anchor.anchor_storage_path for anchor in prefix_plan.anchors],
+        anchors=prefix_plan.anchors,
         real_chunk_storage_path=chunk.storage_path,
     )
-    return str(storage.resolve(prefixed_storage_path)), prefix_plan.manifest
+    return str(storage.resolve(prefixed_storage_path)), PrefixPlan(
+        manifest=effective_manifest,
+        anchors=prefix_plan.anchors,
+    )
 
 
 def _normalize_result_segments(
@@ -280,9 +293,10 @@ def _write_prefixed_wav(
     storage: LocalArtifactStorage,
     *,
     prefixed_storage_path: str,
-    anchor_paths: list[str],
+    anchors: tuple[PersistedAnchor, ...],
     real_chunk_storage_path: str,
-) -> None:
+) -> PrefixManifest:
+    anchor_paths = [anchor.anchor_storage_path for anchor in anchors]
     source_paths = [*anchor_paths, real_chunk_storage_path]
     resolved_paths = [storage.resolve(path) for path in source_paths]
 
@@ -291,9 +305,11 @@ def _write_prefixed_wav(
         sampwidth = first_wav.getsampwidth()
         framerate = first_wav.getframerate()
 
-    silence_between_frames = int(framerate * 500 / 1000)
-    silence_before_real_frames = int(framerate * 800 / 1000)
+    silence_between_frames = _ms_to_frames(500, framerate)
+    silence_before_real_frames = _ms_to_frames(800, framerate)
     silence_frame = b"\x00" * (nchannels * sampwidth)
+    anchor_regions = []
+    cursor_ms = 0
 
     destination = storage.resolve(prefixed_storage_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -302,7 +318,8 @@ def _write_prefixed_wav(
         output_wav.setsampwidth(sampwidth)
         output_wav.setframerate(framerate)
 
-        for index, anchor_path in enumerate(anchor_paths):
+        for index, anchor in enumerate(anchors):
+            anchor_path = anchor.anchor_storage_path
             with wave.open(str(storage.resolve(anchor_path)), "rb") as anchor_wav:
                 _assert_matching_wav_params(
                     anchor_wav,
@@ -310,12 +327,24 @@ def _write_prefixed_wav(
                     sampwidth=sampwidth,
                     framerate=framerate,
                 )
-                output_wav.writeframes(anchor_wav.readframes(anchor_wav.getnframes()))
-            if index < len(anchor_paths) - 1:
+                anchor_frame_count = anchor_wav.getnframes()
+                output_wav.writeframes(anchor_wav.readframes(anchor_frame_count))
+            anchor_duration_ms = _frames_to_ms(anchor_frame_count, framerate)
+            anchor_regions.append(
+                {
+                    "speaker_key": anchor.speaker_key,
+                    "start_ms": cursor_ms,
+                    "end_ms": cursor_ms + anchor_duration_ms,
+                }
+            )
+            cursor_ms += anchor_duration_ms
+            if index < len(anchors) - 1:
                 output_wav.writeframes(silence_frame * silence_between_frames)
+                cursor_ms += _frames_to_ms(silence_between_frames, framerate)
 
-        if anchor_paths:
+        if anchors:
             output_wav.writeframes(silence_frame * silence_before_real_frames)
+            cursor_ms += _frames_to_ms(silence_before_real_frames, framerate)
 
         with wave.open(str(storage.resolve(real_chunk_storage_path)), "rb") as real_chunk_wav:
             _assert_matching_wav_params(
@@ -325,6 +354,18 @@ def _write_prefixed_wav(
                 framerate=framerate,
             )
             output_wav.writeframes(real_chunk_wav.readframes(real_chunk_wav.getnframes()))
+    return PrefixManifest(
+        real_chunk_offset_ms=cursor_ms,
+        anchor_regions=tuple(
+            AnchorRegion(
+                speaker_key=region["speaker_key"],
+                start_ms=region["start_ms"],
+                end_ms=region["end_ms"],
+            )
+            for region in anchor_regions
+        ),
+        prefix_total_ms=cursor_ms,
+    )
 
 
 def _assert_matching_wav_params(
@@ -340,6 +381,14 @@ def _assert_matching_wav_params(
         or wav_file.getframerate() != framerate
     ):
         raise ValueError("prefix artifact inputs must share WAV parameters")
+
+
+def _frames_to_ms(frame_count: int, framerate: int) -> int:
+    return int(round((frame_count * 1000) / framerate))
+
+
+def _ms_to_frames(duration_ms: int, framerate: int) -> int:
+    return int(round((duration_ms * framerate) / 1000))
 
 
 def _remove_empty_parents(start: Path, root: Path) -> None:
