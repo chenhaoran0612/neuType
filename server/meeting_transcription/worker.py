@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -69,6 +71,7 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
         if repositories.fallback_chunks_exist(db, session):
             continue
 
+        written_artifact_paths: list[str] = []
         try:
             split_chunks = split_full_audio_into_chunks(
                 str(storage.resolve(session.final_audio_storage_path)),
@@ -85,6 +88,7 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
                     f"{split_chunk.chunk_index}.wav",
                 )
                 storage.write_bytes(storage_path, split_chunk.audio_bytes)
+                written_artifact_paths.append(storage_path)
                 repositories.create_fallback_chunk(
                     db,
                     session=session,
@@ -99,6 +103,11 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
         except Exception as exc:
             session_id = session.id
             db.rollback()
+            for logical_path in reversed(written_artifact_paths):
+                artifact_path = storage.resolve(logical_path)
+                if artifact_path.exists():
+                    artifact_path.unlink()
+                    _remove_empty_parents(artifact_path.parent, storage.root)
             reloaded_session = db.get(TranscriptionSession, session_id)
             repositories.mark_session_failed(
                 db,
@@ -108,3 +117,13 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
         return True
 
     return False
+
+
+def _remove_empty_parents(start: Path, root: Path) -> None:
+    current = start
+    while current != root:
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent

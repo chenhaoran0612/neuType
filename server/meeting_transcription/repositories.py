@@ -416,12 +416,13 @@ def recover_stale_processing_chunks(db: Session) -> bool:
         started_at = chunk.processing_started_at
         if started_at is not None and started_at > cutoff:
             continue
-        reset_chunk_after_processing_failure(
-            db,
-            chunk,
-            error_message=chunk.error_message or "recovered stale processing chunk",
-        )
+        chunk.process_status = CHUNK_PROCESS_PENDING
+        chunk.processing_started_at = None
+        chunk.processing_completed_at = None
+        chunk.error_message = chunk.error_message or "recovered stale processing chunk"
         recovered = True
+    if recovered:
+        db.commit()
     return recovered
 
 

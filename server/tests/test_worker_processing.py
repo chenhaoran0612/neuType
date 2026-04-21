@@ -635,12 +635,16 @@ def test_partial_fallback_materialization_rolls_back_partial_chunks(
     fallback_chunks = worker_harness.list_chunks(
         session.session_id, "server_split_from_full_audio"
     )
+    fallback_chunk_path = worker_harness.storage.session_path(
+        session.session_id, "fallback-split-chunks", "0.wav"
+    )
     assert refreshed.status == "failed"
     assert fallback_chunks == []
+    assert worker_harness.storage.exists(fallback_chunk_path) is False
     assert "fallback wav materialization failed" in (refreshed.last_error or "")
 
 
-def test_stale_recovery_consumes_retry_budget_and_can_fail_session(
+def test_stale_recovery_resets_to_pending_without_consuming_retry_budget(
     worker_harness: WorkerHarness,
 ):
     session = worker_harness.seed_session_with_chunks(indexes=[0])
@@ -653,7 +657,7 @@ def test_stale_recovery_consumes_retry_budget_and_can_fail_session(
 
     refreshed = worker_harness.fetch_session(session.session_id)
     chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
-    assert refreshed.status == "failed"
-    assert chunk.process_status == "failed"
-    assert chunk.retry_count == 3
+    assert refreshed.status == "receiving_chunks"
+    assert chunk.process_status == "pending"
+    assert chunk.retry_count == 2
     assert "recovered stale processing chunk" in (chunk.error_message or "")
