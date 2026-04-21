@@ -239,6 +239,11 @@ def manifest_from_dict(payload: dict[str, object]) -> PrefixManifest:
                 raise ValueError(
                     "prefix_manifest anchor region may not extend past prefix_total_ms"
                 )
+    for region in anchor_regions:
+        if region.end_ms > real_chunk_offset_ms:
+            raise ValueError(
+                "prefix_manifest anchor region may not cross real_chunk_offset_ms"
+            )
     return PrefixManifest(
         real_chunk_offset_ms=real_chunk_offset_ms,
         anchor_regions=anchor_regions,

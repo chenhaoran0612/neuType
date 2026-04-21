@@ -169,6 +169,12 @@ def test_manifest_from_dict_rejects_negative_offset_and_invalid_regions():
                 {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000}
             ],
         },
+        {
+            "real_chunk_offset_ms": 1000,
+            "anchor_regions": [
+                {"speaker_key": "speaker_a", "start_ms": 900, "end_ms": 1001}
+            ],
+        },
     ]
 
     for payload in invalid_payloads:

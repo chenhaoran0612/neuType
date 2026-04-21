@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import hashlib
+import io
 import json
 from pathlib import Path
 import wave
@@ -329,7 +330,15 @@ class WorkerHarness:
 
     @staticmethod
     def _wav_bytes(tag: bytes) -> bytes:
-        return b"RIFFtestWAVEfmt " + tag + (b"\x00" * 64)
+        buffer = io.BytesIO()
+        frame_count = 300000
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(1000)
+            pattern = (tag[:1] or b"\x01") * 2
+            wav_file.writeframes(pattern * frame_count)
+        return buffer.getvalue()
 
     @staticmethod
     def _fetch_chunk(db, public_session_id: str, chunk_index: int, source_type: str) -> SessionChunk:
@@ -529,6 +538,9 @@ def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_an
     anchor_path = anchors[0].anchor_storage_path
     assert anchor_path is not None
     assert worker_harness.storage.exists(anchor_path) is True
+    with wave.open(str(worker_harness.storage.resolve(anchor_path)), "rb") as anchor_wav:
+        anchor_duration_ms = anchor_wav.getnframes()
+    assert 3400 <= anchor_duration_ms <= 3600
 
     assert worker_harness.run_once(transcriber=transcriber) is True
     prefixed_call = transcriber.calls[1]
@@ -536,6 +548,11 @@ def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_an
     assert prefixed_call["audio_path"].endswith("/artifacts/prefix/1.wav")
     assert Path(prefixed_call["audio_path"]).exists() is True
     assert prefixed_call["prefix_plan"] is not None
+    with wave.open(prefixed_call["audio_path"], "rb") as prefixed_wav:
+        prefixed_duration_ms = prefixed_wav.getnframes()
+    expected_offset_ms = anchors[0].anchor_duration_ms + 800
+    assert prefixed_call["prefix_plan"].manifest.real_chunk_offset_ms == expected_offset_ms
+    assert prefixed_duration_ms == expected_offset_ms + 300000
 
 
 def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: WorkerHarness):
@@ -583,13 +600,13 @@ def test_worker_resets_chunk_when_manifest_validation_rejects_type_valid_payload
             del session, chunk, audio_path, prefix_plan
             return {
                 "segment_count": 1,
-                "prefix_manifest": {
-                    "real_chunk_offset_ms": 1000,
-                    "prefix_total_ms": 900,
-                    "anchor_regions": [
-                        {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000}
-                    ],
-                },
+                    "prefix_manifest": {
+                        "real_chunk_offset_ms": 1000,
+                        "prefix_total_ms": 1000,
+                        "anchor_regions": [
+                            {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1001}
+                        ],
+                    },
                 "segments": [
                     {"text": "broken", "start_ms": 1200, "end_ms": 1500, "speaker_label": "Speaker 1"}
                 ],
@@ -718,6 +735,7 @@ def test_worker_preserves_no_prefix_already_absolute_timestamps(
             assert chunk.chunk_index == 1
             return {
                 "segment_count": 1,
+                "timestamps_are_absolute": True,
                 "segments": [
                     {
                         "text": "already absolute",

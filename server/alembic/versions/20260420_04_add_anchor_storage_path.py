@@ -20,11 +20,6 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.execute(
-        "UPDATE speaker_anchors SET anchor_storage_path = '' WHERE anchor_storage_path IS NULL"
-    )
-    with op.batch_alter_table("speaker_anchors") as batch_op:
-        batch_op.alter_column("anchor_storage_path", nullable=False)
 
 
 def downgrade() -> None:

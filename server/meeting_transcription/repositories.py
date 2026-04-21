@@ -8,6 +8,7 @@ from datetime import timedelta
 import hashlib
 import json
 from pathlib import Path
+import wave
 from uuid import uuid4
 
 from sqlalchemy import Select, select
@@ -16,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from meeting_transcription.anchor_audio import (
     Segment,
-    anchor_from_segment,
     segments_from_payload,
     select_anchor_candidate,
     stable_speaker_key,
@@ -717,30 +717,27 @@ def _persist_committed_speaker_anchors(
         candidate = select_anchor_candidate(segments, chunk_end_ms=chunk.end_ms)
         if candidate is None:
             continue
-        anchor = anchor_from_segment(
-            candidate,
-            anchor_order=0,
-            fallback_speaker_key=speaker_key,
+        anchor_metadata = _write_anchor_artifact(
+            storage,
+            chunk=chunk,
+            session_id=session.session_id,
+            speaker_key=speaker_key,
+            candidate=candidate,
         )
-        if anchor is None:
+        if anchor_metadata is None:
             continue
         create_speaker_anchor(
             db,
             session=session,
-            speaker_key=anchor.speaker_key,
+            speaker_key=speaker_key,
             source_chunk_index=chunk.chunk_index,
-            anchor_text=anchor.anchor_text,
-            anchor_start_ms=candidate.start_ms,
-            anchor_end_ms=candidate.end_ms,
-            anchor_duration_ms=anchor.anchor_duration_ms,
-            anchor_storage_path=_write_anchor_artifact(
-                storage,
-                session_id=session.session_id,
-                speaker_key=anchor.speaker_key,
-                candidate=candidate,
-            ),
+            anchor_text=candidate.text,
+            anchor_start_ms=anchor_metadata["anchor_start_ms"],
+            anchor_end_ms=anchor_metadata["anchor_end_ms"],
+            anchor_duration_ms=anchor_metadata["anchor_duration_ms"],
+            anchor_storage_path=anchor_metadata["anchor_storage_path"],
         )
-        existing_keys.add(anchor.speaker_key)
+        existing_keys.add(speaker_key)
 
 
 def _chunk_normalized_segments(chunk: SessionChunk) -> list[Segment]:
@@ -755,18 +752,42 @@ def _chunk_normalized_segments(chunk: SessionChunk) -> list[Segment]:
 def _write_anchor_artifact(
     storage: LocalArtifactStorage,
     *,
+    chunk: SessionChunk,
     session_id: str,
     speaker_key: str,
     candidate: Segment,
-) -> str:
+) -> dict[str, object] | None:
     storage_path = storage.session_path(session_id, "anchors", f"{speaker_key}.wav")
-    payload = (
-        f"ANCHOR|{speaker_key}|{candidate.start_ms}|{candidate.end_ms}|{candidate.text}".encode(
-            "utf-8"
-        )
-    )
-    storage.write_bytes(storage_path, payload)
-    return storage_path
+    anchor_start_ms = max(chunk.start_ms, candidate.start_ms - 200)
+    anchor_end_ms = min(chunk.end_ms, candidate.end_ms + 300)
+    duration_ms = anchor_end_ms - anchor_start_ms
+    if duration_ms <= 0:
+        return None
+
+    source_path = storage.resolve(chunk.storage_path)
+    destination_path = storage.resolve(storage_path)
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with wave.open(str(source_path), "rb") as source_wav:
+        frame_rate = source_wav.getframerate()
+        start_frame = max(0, int(anchor_start_ms - chunk.start_ms) * frame_rate // 1000)
+        end_frame = max(start_frame, int(anchor_end_ms - chunk.start_ms) * frame_rate // 1000)
+        frame_count = end_frame - start_frame
+        source_wav.setpos(start_frame)
+        frames = source_wav.readframes(frame_count)
+
+        with wave.open(str(destination_path), "wb") as destination_wav:
+            destination_wav.setnchannels(source_wav.getnchannels())
+            destination_wav.setsampwidth(source_wav.getsampwidth())
+            destination_wav.setframerate(frame_rate)
+            destination_wav.writeframes(frames)
+
+    return {
+        "anchor_storage_path": storage_path,
+        "anchor_start_ms": anchor_start_ms,
+        "anchor_end_ms": anchor_end_ms,
+        "anchor_duration_ms": duration_ms,
+    }
 
 
 def _next_anchor_order(db: Session, session: TranscriptionSession) -> int:

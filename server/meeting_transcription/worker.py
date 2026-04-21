@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import wave
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,7 +51,7 @@ def run_pending_chunk_once(
 
     repositories.mark_chunk_processing(db, chunk)
     session = chunk.session
-    prefix_plan = _prepare_prefix_plan(db, session)
+    prefix_plan = _prepare_prefix_plan(db, session, storage=storage)
     transcription_audio_path, effective_prefix_manifest = _prepare_transcription_audio(
         storage,
         session_id=session.session_id,
@@ -160,7 +161,9 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
     return False
 
 
-def _prepare_prefix_plan(db: Session, session: TranscriptionSession) -> PrefixPlan | None:
+def _prepare_prefix_plan(
+    db: Session, session: TranscriptionSession, *, storage: LocalArtifactStorage
+) -> PrefixPlan | None:
     persisted_anchors = [
         PersistedAnchor(
             speaker_key=anchor.speaker_key,
@@ -170,6 +173,7 @@ def _prepare_prefix_plan(db: Session, session: TranscriptionSession) -> PrefixPl
             anchor_storage_path=anchor.anchor_storage_path,
         )
         for anchor in repositories.list_speaker_anchors(db, session)
+        if anchor.anchor_storage_path and storage.exists(anchor.anchor_storage_path)
     ]
     return build_prefix_plan(persisted_anchors)
 
@@ -188,13 +192,16 @@ def _prepare_transcription_audio(
     prefixed_storage_path = storage.session_path(
         session_id, "artifacts", "prefix", f"{chunk.chunk_index}.wav"
     )
-    payload_parts: list[bytes] = []
-    for anchor in prefix_plan.anchors:
-        payload_parts.append(storage.read_bytes(anchor.anchor_storage_path))
-        payload_parts.append(b"|GAP|")
-    payload_parts.append(b"|REAL|")
-    payload_parts.append(storage.read_bytes(chunk.storage_path))
-    storage.write_bytes(prefixed_storage_path, b"".join(payload_parts))
+    _write_prefixed_wav(
+        storage,
+        prefixed_storage_path=prefixed_storage_path,
+        anchor_paths=[
+            anchor.anchor_storage_path
+            for anchor in prefix_plan.anchors
+            if anchor.anchor_storage_path and storage.exists(anchor.anchor_storage_path)
+        ],
+        real_chunk_storage_path=chunk.storage_path,
+    )
     return str(storage.resolve(prefixed_storage_path)), prefix_plan.manifest
 
 
@@ -218,16 +225,12 @@ def _normalize_result_segments(
     segments = segments_from_payload(segments_payload)
     manifest = _coerce_manifest_payload(manifest_payload, fallback_manifest)
     if manifest is None:
+        timestamps_are_absolute = result.get("timestamps_are_absolute") is True
         return (
-            remap_real_chunk_segments(
-                _normalize_segments_without_prefix(
-                    segments,
-                    chunk_start_ms=chunk_start_ms,
-                    chunk_end_ms=chunk_end_ms,
-                ),
-                {},
-                chunk_start_ms=0,
-                real_chunk_offset_ms=0,
+            _normalize_segments_without_prefix(
+                segments,
+                chunk_start_ms=chunk_start_ms,
+                timestamps_are_absolute=timestamps_are_absolute,
             ),
             None,
         )
@@ -266,22 +269,82 @@ def _normalize_segments_without_prefix(
     segments: list[Segment],
     *,
     chunk_start_ms: int,
-    chunk_end_ms: int,
+    timestamps_are_absolute: bool,
 ) -> list[Segment]:
-    normalized: list[Segment] = []
-    for segment in segments:
-        if segment.start_ms >= chunk_start_ms and segment.end_ms <= chunk_end_ms:
-            normalized.append(segment)
-            continue
-        normalized.extend(
-            remap_real_chunk_segments(
-                [segment],
-                {},
-                chunk_start_ms=chunk_start_ms,
-                real_chunk_offset_ms=0,
+    if timestamps_are_absolute:
+        return segments
+    return remap_real_chunk_segments(
+        segments,
+        {},
+        chunk_start_ms=chunk_start_ms,
+        real_chunk_offset_ms=0,
+    )
+
+
+def _write_prefixed_wav(
+    storage: LocalArtifactStorage,
+    *,
+    prefixed_storage_path: str,
+    anchor_paths: list[str],
+    real_chunk_storage_path: str,
+) -> None:
+    source_paths = [*anchor_paths, real_chunk_storage_path]
+    resolved_paths = [storage.resolve(path) for path in source_paths]
+
+    with wave.open(str(resolved_paths[0]), "rb") as first_wav:
+        nchannels = first_wav.getnchannels()
+        sampwidth = first_wav.getsampwidth()
+        framerate = first_wav.getframerate()
+
+    silence_between_frames = int(framerate * 500 / 1000)
+    silence_before_real_frames = int(framerate * 800 / 1000)
+    silence_frame = b"\x00" * (nchannels * sampwidth)
+
+    destination = storage.resolve(prefixed_storage_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(destination), "wb") as output_wav:
+        output_wav.setnchannels(nchannels)
+        output_wav.setsampwidth(sampwidth)
+        output_wav.setframerate(framerate)
+
+        for index, anchor_path in enumerate(anchor_paths):
+            with wave.open(str(storage.resolve(anchor_path)), "rb") as anchor_wav:
+                _assert_matching_wav_params(
+                    anchor_wav,
+                    nchannels=nchannels,
+                    sampwidth=sampwidth,
+                    framerate=framerate,
+                )
+                output_wav.writeframes(anchor_wav.readframes(anchor_wav.getnframes()))
+            if index < len(anchor_paths) - 1:
+                output_wav.writeframes(silence_frame * silence_between_frames)
+
+        if anchor_paths:
+            output_wav.writeframes(silence_frame * silence_before_real_frames)
+
+        with wave.open(str(storage.resolve(real_chunk_storage_path)), "rb") as real_chunk_wav:
+            _assert_matching_wav_params(
+                real_chunk_wav,
+                nchannels=nchannels,
+                sampwidth=sampwidth,
+                framerate=framerate,
             )
-        )
-    return normalized
+            output_wav.writeframes(real_chunk_wav.readframes(real_chunk_wav.getnframes()))
+
+
+def _assert_matching_wav_params(
+    wav_file,
+    *,
+    nchannels: int,
+    sampwidth: int,
+    framerate: int,
+) -> None:
+    if (
+        wav_file.getnchannels() != nchannels
+        or wav_file.getsampwidth() != sampwidth
+        or wav_file.getframerate() != framerate
+    ):
+        raise ValueError("prefix artifact inputs must share WAV parameters")
 
 
 def _remove_empty_parents(start: Path, root: Path) -> None:
