@@ -238,21 +238,37 @@ def finalize_session(
     payload: FinalizeSessionRequest,
 ) -> FinalizeSessionResponse:
     session = _get_session_by_public_id(db, public_session_id)
-    uploaded_indexes = {
-        chunk.chunk_index
-        for chunk in session.chunks
-        if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE
-        and chunk.upload_status == UPLOAD_STATUS_UPLOADED
-    }
     expected_count = payload.expected_chunk_count
     missing_chunk_indexes: list[int] = []
     if expected_count is not None:
         session.expected_chunk_count = expected_count
-        missing_chunk_indexes = sorted(set(range(expected_count)) - uploaded_indexes)
+        live_chunks_by_index = {
+            chunk.chunk_index: chunk
+            for chunk in session.chunks
+            if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE
+            and chunk.upload_status == UPLOAD_STATUS_UPLOADED
+        }
+        missing_chunk_indexes = sorted(
+            index for index in range(expected_count) if index not in live_chunks_by_index
+        )
+        failed_live_indexes = sorted(
+            index
+            for index, chunk in live_chunks_by_index.items()
+            if chunk.process_status == CHUNK_PROCESS_FAILED
+        )
+    else:
+        failed_live_indexes = sorted(
+            chunk.chunk_index
+            for chunk in session.chunks
+            if chunk.source_type == LIVE_CHUNK_SOURCE_TYPE
+            and chunk.upload_status == UPLOAD_STATUS_UPLOADED
+            and chunk.process_status == CHUNK_PROCESS_FAILED
+        )
 
     usable_fallback = _session_has_usable_full_audio(session)
+    fallback_needed = bool(missing_chunk_indexes or failed_live_indexes)
     switching_to_fallback = (
-        bool(missing_chunk_indexes)
+        fallback_needed
         and payload.allow_full_audio_fallback
         and usable_fallback
         and session.selected_final_input_mode != FULL_AUDIO_FALLBACK_INPUT_MODE
@@ -265,13 +281,13 @@ def finalize_session(
         session.last_committed_chunk_index = -1
         session.finalized_at = session.finalized_at or utcnow()
     elif (
-        bool(missing_chunk_indexes)
+        fallback_needed
         and session.selected_final_input_mode == FULL_AUDIO_FALLBACK_INPUT_MODE
         and usable_fallback
     ):
         session.status = session.status if session.status in TERMINAL_SESSION_STATUSES else "finalizing"
         session.input_mode = FULL_AUDIO_FALLBACK_INPUT_MODE
-    elif missing_chunk_indexes:
+    elif fallback_needed:
         session.status = AWAITING_FALLBACK_STATUS
         session.input_mode = LIVE_CHUNKS_INPUT_MODE
         session.selected_final_input_mode = LIVE_CHUNKS_INPUT_MODE

@@ -561,6 +561,35 @@ def test_retry_exhaustion_moves_live_session_to_awaiting_fallback_when_available
     assert chunk.retry_count == 3
 
 
+def test_retry_exhausted_live_session_can_refinalize_into_fallback_and_complete(
+    worker_harness: WorkerHarness, full_audio_file: Path
+):
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+    worker_harness.attach_full_audio(session, full_audio_file)
+    worker_harness.finalize(session.session_id, expected_chunk_count=1)
+    transcriber = AlwaysFailingTranscriber()
+
+    for _ in range(3):
+        assert worker_harness.run_once(transcriber=transcriber) is True
+
+    exhausted = worker_harness.fetch_session(session.session_id)
+    exhausted_chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert exhausted.status == "awaiting_fallback"
+    assert exhausted_chunk.process_status == "failed"
+
+    worker_harness.finalize(session.session_id, expected_chunk_count=1)
+    worker_harness.run_until_idle()
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    fallback_chunks = worker_harness.list_chunks(
+        session.session_id, "server_split_from_full_audio"
+    )
+    assert refreshed.selected_final_input_mode == "full_audio_fallback"
+    assert refreshed.input_mode == "full_audio_fallback"
+    assert refreshed.status == "completed"
+    assert all(chunk.process_status == "completed" for chunk in fallback_chunks)
+
+
 def test_stale_processing_recovery_only_resets_old_chunks(
     worker_harness: WorkerHarness,
 ):
@@ -624,6 +653,9 @@ def test_partial_fallback_materialization_rolls_back_partial_chunks(
         if "fallback-split-chunks" in logical_path:
             calls += 1
             if calls == 2:
+                destination = worker_harness.storage.resolve(logical_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(payload[:8] or b"partial")
                 raise OSError("simulated fallback storage failure")
         return original_write_bytes(logical_path, payload)
 
@@ -635,12 +667,16 @@ def test_partial_fallback_materialization_rolls_back_partial_chunks(
     fallback_chunks = worker_harness.list_chunks(
         session.session_id, "server_split_from_full_audio"
     )
-    fallback_chunk_path = worker_harness.storage.session_path(
+    fallback_chunk_path_0 = worker_harness.storage.session_path(
         session.session_id, "fallback-split-chunks", "0.wav"
+    )
+    fallback_chunk_path_1 = worker_harness.storage.session_path(
+        session.session_id, "fallback-split-chunks", "1.wav"
     )
     assert refreshed.status == "failed"
     assert fallback_chunks == []
-    assert worker_harness.storage.exists(fallback_chunk_path) is False
+    assert worker_harness.storage.exists(fallback_chunk_path_0) is False
+    assert worker_harness.storage.exists(fallback_chunk_path_1) is False
     assert "fallback wav materialization failed" in (refreshed.last_error or "")
 
 

@@ -87,8 +87,8 @@ def _materialize_fallback_chunks_once(db: Session, *, storage: LocalArtifactStor
                     "fallback-split-chunks",
                     f"{split_chunk.chunk_index}.wav",
                 )
-                storage.write_bytes(storage_path, split_chunk.audio_bytes)
                 written_artifact_paths.append(storage_path)
+                storage.write_bytes(storage_path, split_chunk.audio_bytes)
                 repositories.create_fallback_chunk(
                     db,
                     session=session,
