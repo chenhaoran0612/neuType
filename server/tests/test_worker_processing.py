@@ -349,6 +349,36 @@ def invalid_full_audio_file(tmp_path: Path) -> Path:
     return audio_path
 
 
+def test_worker_counts_only_real_segments_after_prefix_stripping(worker_harness: WorkerHarness):
+    class PrefixAwareTranscriber:
+        def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str):
+            del session, audio_path
+            return {
+                "segment_count": 99,
+                "prefix_manifest": {
+                    "real_chunk_offset_ms": 4000,
+                    "anchor_regions": [
+                        {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000},
+                        {"speaker_key": "speaker_b", "start_ms": 1500, "end_ms": 2500},
+                    ],
+                },
+                "segments": [
+                    {"text": "anchor a", "start_ms": 0, "end_ms": 950, "speaker_label": "Speaker 7"},
+                    {"text": "anchor b", "start_ms": 1500, "end_ms": 2450, "speaker_label": "Speaker 2"},
+                    {"text": "crossing", "start_ms": 3900, "end_ms": 4100, "speaker_label": "Speaker 7"},
+                    {"text": "real", "start_ms": 4300, "end_ms": 5100, "speaker_label": "Speaker 2"},
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0])
+
+    assert worker_harness.run_once(transcriber=PrefixAwareTranscriber()) is True
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    assert chunk.process_status == "processed"
+    assert chunk.result_segment_count == 1
+
+
 def test_worker_only_commits_next_chunk_in_order(worker_harness: WorkerHarness):
     session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
     worker_harness.seed_processed_result(session, chunk_index=1)

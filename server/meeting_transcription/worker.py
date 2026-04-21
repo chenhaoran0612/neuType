@@ -7,6 +7,14 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from meeting_transcription.anchor_audio import (
+    Segment,
+    build_speaker_label_map,
+    manifest_from_dict,
+    remap_real_chunk_segments,
+    segments_from_payload,
+    strip_prefix_segments,
+)
 from meeting_transcription.audio_chunks import split_full_audio_into_chunks
 from meeting_transcription.models import TranscriptionSession
 from meeting_transcription import repositories
@@ -48,10 +56,15 @@ def run_pending_chunk_once(
         )
         return True
 
+    normalized_segments = _normalize_result_segments(chunk_start_ms=chunk.start_ms, result=result)
     repositories.mark_chunk_processed(
         db,
         chunk,
-        segment_count=int(result.get("segment_count", 0)),
+        segment_count=(
+            len(normalized_segments)
+            if normalized_segments is not None
+            else int(result.get("segment_count", 0))
+        ),
     )
     return True
 
@@ -127,3 +140,23 @@ def _remove_empty_parents(start: Path, root: Path) -> None:
         except OSError:
             break
         current = current.parent
+
+
+def _normalize_result_segments(
+    *, chunk_start_ms: int, result: dict[str, object]
+) -> list[Segment] | None:
+    manifest_payload = result.get("prefix_manifest")
+    segments_payload = result.get("segments")
+    if not isinstance(manifest_payload, dict) or not isinstance(segments_payload, list):
+        return None
+
+    manifest = manifest_from_dict(manifest_payload)
+    segments = segments_from_payload(segments_payload)
+    label_map = build_speaker_label_map(segments, manifest)
+    kept_segments = strip_prefix_segments(segments, manifest)
+    return remap_real_chunk_segments(
+        kept_segments,
+        label_map,
+        chunk_start_ms=chunk_start_ms,
+        real_chunk_offset_ms=manifest.real_chunk_offset_ms,
+    )
