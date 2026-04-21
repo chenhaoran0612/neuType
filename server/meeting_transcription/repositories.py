@@ -12,7 +12,12 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from meeting_transcription.models import SessionChunk, TranscriptionSession, utcnow
+from meeting_transcription.models import (
+    SessionChunk,
+    SpeakerAnchor,
+    TranscriptionSession,
+    utcnow,
+)
 from meeting_transcription.schemas import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -379,6 +384,51 @@ def create_fallback_chunk(
     return chunk
 
 
+def list_speaker_anchors(
+    db: Session, session: TranscriptionSession
+) -> list[SpeakerAnchor]:
+    return db.scalars(
+        select(SpeakerAnchor)
+        .where(SpeakerAnchor.session_id == session.id)
+        .order_by(SpeakerAnchor.anchor_order, SpeakerAnchor.created_at)
+    ).all()
+
+
+def create_speaker_anchor(
+    db: Session,
+    *,
+    session: TranscriptionSession,
+    speaker_key: str,
+    source_chunk_index: int,
+    anchor_text: str,
+    anchor_start_ms: int,
+    anchor_end_ms: int,
+    anchor_duration_ms: int,
+) -> SpeakerAnchor:
+    existing = db.scalar(
+        select(SpeakerAnchor).where(
+            SpeakerAnchor.session_id == session.id,
+            SpeakerAnchor.speaker_key == speaker_key,
+        )
+    )
+    if existing is not None:
+        return existing
+
+    anchor = SpeakerAnchor(
+        session_id=session.id,
+        speaker_key=speaker_key,
+        anchor_order=_next_anchor_order(db, session),
+        source_chunk_index=source_chunk_index,
+        anchor_text=anchor_text,
+        anchor_start_ms=anchor_start_ms,
+        anchor_end_ms=anchor_end_ms,
+        anchor_duration_ms=anchor_duration_ms,
+    )
+    db.add(anchor)
+    db.flush()
+    return anchor
+
+
 def mark_chunk_processing(db: Session, chunk: SessionChunk) -> None:
     chunk.process_status = CHUNK_PROCESS_PROCESSING
     chunk.processing_started_at = utcnow()
@@ -387,9 +437,18 @@ def mark_chunk_processing(db: Session, chunk: SessionChunk) -> None:
     db.refresh(chunk)
 
 
-def mark_chunk_processed(db: Session, chunk: SessionChunk, *, segment_count: int) -> None:
+def mark_chunk_processed(
+    db: Session,
+    chunk: SessionChunk,
+    *,
+    segment_count: int,
+    prepared_prefix_manifest_json: str | None = None,
+    normalized_segments_json: str | None = None,
+) -> None:
     chunk.process_status = CHUNK_PROCESS_PROCESSED
     chunk.result_segment_count = segment_count
+    chunk.prepared_prefix_manifest_json = prepared_prefix_manifest_json
+    chunk.normalized_segments_json = normalized_segments_json
     chunk.error_message = None
     chunk.processing_completed_at = utcnow()
     db.commit()
@@ -616,3 +675,10 @@ def _maybe_complete_session(
 
     session.status = "completed"
     session.finalized_at = session.finalized_at or utcnow()
+
+
+def _next_anchor_order(db: Session, session: TranscriptionSession) -> int:
+    anchors = list_speaker_anchors(db, session)
+    if not anchors:
+        return 0
+    return anchors[-1].anchor_order + 1

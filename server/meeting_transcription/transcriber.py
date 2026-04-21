@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from meeting_transcription.anchor_audio import PrefixPlan
 from meeting_transcription.models import SessionChunk, TranscriptionSession
 
 
@@ -12,7 +13,12 @@ class ChunkTranscriber(Protocol):
     """Minimal protocol used by the worker to transcribe one chunk."""
 
     def transcribe_chunk(
-        self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str
+        self,
+        *,
+        session: TranscriptionSession,
+        chunk: SessionChunk,
+        audio_path: str,
+        prefix_plan: PrefixPlan | None = None,
     ) -> dict[str, object]:
         """Return parsed metadata for one chunk."""
         ...

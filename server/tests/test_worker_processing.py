@@ -2,20 +2,21 @@ from __future__ import annotations
 
 from datetime import timedelta
 import hashlib
+import json
 from pathlib import Path
 import wave
 
 import pytest
 
 from meeting_transcription.db import create_engine, create_session_factory
-from meeting_transcription.models import Base, SessionChunk, TranscriptionSession, utcnow
+from meeting_transcription.models import Base, SessionChunk, SpeakerAnchor, TranscriptionSession, utcnow
 from meeting_transcription.storage import LocalArtifactStorage
 from meeting_transcription.worker import run_pending_chunk_once
 
 
 class StubTranscriber:
-    def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str):
-        del audio_path
+    def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str, prefix_plan=None):
+        del audio_path, prefix_plan
         return {
             "text": f"chunk-{chunk.chunk_index}",
             "segment_count": 1,
@@ -28,7 +29,8 @@ class FailingOnceTranscriber:
     def __init__(self) -> None:
         self.calls = 0
 
-    def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str):
+    def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str, prefix_plan=None):
+        del prefix_plan
         self.calls += 1
         if self.calls == 1:
             raise RuntimeError("temporary model outage")
@@ -39,9 +41,9 @@ class FailingOnceTranscriber:
 
 class AlwaysFailingTranscriber:
     def transcribe_chunk(
-        self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str
+        self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str, prefix_plan=None
     ):
-        del session, chunk, audio_path
+        del session, chunk, audio_path, prefix_plan
         raise RuntimeError("persistent model outage")
 
 
@@ -256,6 +258,22 @@ class WorkerHarness:
         finally:
             db.close()
 
+    def list_speaker_anchors(self, public_session_id: str) -> list[SpeakerAnchor]:
+        db = self.session_factory()
+        try:
+            session = self.fetch_session(public_session_id, db=db)
+            anchors = (
+                db.query(SpeakerAnchor)
+                .filter_by(session_id=session.id)
+                .order_by(SpeakerAnchor.anchor_order)
+                .all()
+            )
+            for anchor in anchors:
+                db.refresh(anchor)
+            return anchors
+        finally:
+            db.close()
+
     def mark_chunk_processing_state(
         self,
         public_session_id: str,
@@ -349,34 +367,115 @@ def invalid_full_audio_file(tmp_path: Path) -> Path:
     return audio_path
 
 
-def test_worker_counts_only_real_segments_after_prefix_stripping(worker_harness: WorkerHarness):
+def test_worker_creates_anchor_then_uses_prefix_plan_and_persists_normalized_segments(
+    worker_harness: WorkerHarness,
+):
     class PrefixAwareTranscriber:
-        def transcribe_chunk(self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str):
+        def __init__(self) -> None:
+            self.prefix_plans = []
+
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
             del session, audio_path
+            self.prefix_plans.append(prefix_plan)
+            if chunk.chunk_index == 0:
+                return {
+                    "segment_count": 2,
+                    "segments": [
+                        {"text": "嗯", "start_ms": 0, "end_ms": 300, "speaker_label": "Speaker 1"},
+                        {
+                            "text": "我们开始今天的周会",
+                            "start_ms": 500,
+                            "end_ms": 3600,
+                            "speaker_label": "Speaker 1",
+                        },
+                    ],
+                }
+            assert prefix_plan is not None
             return {
                 "segment_count": 99,
-                "prefix_manifest": {
-                    "real_chunk_offset_ms": 4000,
-                    "anchor_regions": [
-                        {"speaker_key": "speaker_a", "start_ms": 0, "end_ms": 1000},
-                        {"speaker_key": "speaker_b", "start_ms": 1500, "end_ms": 2500},
-                    ],
-                },
                 "segments": [
-                    {"text": "anchor a", "start_ms": 0, "end_ms": 950, "speaker_label": "Speaker 7"},
-                    {"text": "anchor b", "start_ms": 1500, "end_ms": 2450, "speaker_label": "Speaker 2"},
-                    {"text": "crossing", "start_ms": 3900, "end_ms": 4100, "speaker_label": "Speaker 7"},
-                    {"text": "real", "start_ms": 4300, "end_ms": 5100, "speaker_label": "Speaker 2"},
+                    {
+                        "text": "anchor revisit",
+                        "start_ms": 0,
+                        "end_ms": 3000,
+                        "speaker_label": "Speaker 9",
+                    },
+                    {
+                        "text": "real",
+                        "start_ms": prefix_plan.manifest.real_chunk_offset_ms + 300,
+                        "end_ms": prefix_plan.manifest.real_chunk_offset_ms + 1100,
+                        "speaker_label": "Speaker 9",
+                    },
+                ],
+            }
+
+    session = worker_harness.seed_session_with_chunks(indexes=[0, 1])
+    transcriber = PrefixAwareTranscriber()
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    anchors = worker_harness.list_speaker_anchors(session.session_id)
+    assert [(anchor.speaker_key, anchor.anchor_text) for anchor in anchors] == [
+        ("speaker_1", "我们开始今天的周会")
+    ]
+
+    assert worker_harness.run_once(transcriber=transcriber) is True
+    assert worker_harness.run_once(transcriber=transcriber) is True
+
+    second_chunk = worker_harness.fetch_chunk(session.session_id, 1, "live_chunk")
+    normalized_segments = json.loads(second_chunk.normalized_segments_json)
+    prepared_manifest = json.loads(second_chunk.prepared_prefix_manifest_json)
+
+    assert transcriber.prefix_plans[0] is None
+    assert transcriber.prefix_plans[1] is not None
+    assert prepared_manifest["real_chunk_offset_ms"] == transcriber.prefix_plans[1].manifest.real_chunk_offset_ms
+    assert normalized_segments == [
+        {
+            "text": "real",
+            "start_ms": 300300,
+            "end_ms": 301100,
+            "speaker_label": "Speaker 9",
+            "speaker_key": "speaker_1",
+        }
+    ]
+    assert second_chunk.result_segment_count == 1
+
+
+
+def test_worker_resets_chunk_when_prefix_metadata_is_malformed(worker_harness: WorkerHarness):
+    class MalformedPrefixTranscriber:
+        def transcribe_chunk(
+            self,
+            *,
+            session: TranscriptionSession,
+            chunk: SessionChunk,
+            audio_path: str,
+            prefix_plan=None,
+        ):
+            del session, chunk, audio_path, prefix_plan
+            return {
+                "segment_count": 1,
+                "prefix_manifest": {"real_chunk_offset_ms": "not-an-int"},
+                "segments": [
+                    {"text": "broken", "start_ms": 4200, "end_ms": 5000, "speaker_label": "Speaker 1"}
                 ],
             }
 
     session = worker_harness.seed_session_with_chunks(indexes=[0])
 
-    assert worker_harness.run_once(transcriber=PrefixAwareTranscriber()) is True
+    assert worker_harness.run_once(transcriber=MalformedPrefixTranscriber()) is True
 
     chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
-    assert chunk.process_status == "processed"
-    assert chunk.result_segment_count == 1
+    assert chunk.process_status == "pending"
+    assert chunk.retry_count == 1
+    assert "not-an-int" in chunk.error_message
+    assert chunk.normalized_segments_json is None
 
 
 def test_worker_only_commits_next_chunk_in_order(worker_harness: WorkerHarness):
