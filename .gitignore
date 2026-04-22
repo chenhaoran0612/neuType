@@ -129,3 +129,10 @@ dev_config.json
 .worktrees/
 .neux-ai-dev/
 build-signed-test/
+
+# Local meeting-transcription runtime artifacts
+.local-debug-dd/
+artifacts/
+server/artifacts/
+meeting_transcription.db
+server/meeting_transcription.db

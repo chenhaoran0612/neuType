@@ -36,13 +36,26 @@ enum MeetingRecorderError: LocalizedError {
     }
 }
 
-final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
+final class MeetingRecorder: NSObject, MeetingRecording, MeetingRecordingArtifactProducing, @unchecked Sendable {
     private let captureQueue = DispatchQueue(label: "ai.neuxnet.neutype.meeting.capture")
     private let stateQueue = DispatchQueue(label: "ai.neuxnet.neutype.meeting.state")
+    private let chunkSealer: MeetingChunkSealer
+    private let chunkSealCheckInterval: TimeInterval
 
     private var activeSession: ActiveSession?
     private var stream: SCStream?
     private var microphoneSession: AVCaptureSession?
+    private var sealingTask: Task<Void, Never>?
+    var artifactHandler: MeetingRecordingArtifactHandler?
+
+    init(
+        chunkSealer: MeetingChunkSealer = MeetingChunkSealer(),
+        chunkSealCheckInterval: TimeInterval = 30
+    ) {
+        self.chunkSealer = chunkSealer
+        self.chunkSealCheckInterval = chunkSealCheckInterval
+        super.init()
+    }
 
     func startRecording() async throws {
         let isRecording = withActiveSession { $0 != nil }
@@ -54,7 +67,9 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         do {
             try await configureSystemAudioCapture()
             try await configureMicrophoneCapture()
+            startSealingLoop()
         } catch {
+            await stopSealingLoop()
             await stopSources()
             cleanup(session: session, removeFinalOutput: true)
             updateActiveSession(nil)
@@ -67,6 +82,7 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
             return nil
         }
 
+        await stopSealingLoop()
         await stopSources()
         captureQueue.sync {}
         updateActiveSession(nil)
@@ -76,6 +92,7 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         }
 
         let resultURL = try mixCapturedAudio(for: session)
+        try await emitArtifactsIfNeeded(for: resultURL, session: session)
         return resultURL
     }
 
@@ -83,6 +100,7 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         guard let session = withActiveSession({ $0 }) else { return }
 
         Task {
+            await self.stopSealingLoop()
             await stopSources()
             captureQueue.sync {}
             self.updateActiveSession(nil)
@@ -193,12 +211,15 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         return shareableContent.displays.first
     }
 
-    private func mixCapturedAudio(for session: ActiveSession) throws -> URL {
+    private func mixCapturedAudio(
+        for session: ActiveSession,
+        outputURL: URL? = nil
+    ) throws -> URL {
         let sourceURLs = session.availableSourceURLs()
         guard !sourceURLs.isEmpty else { throw MeetingRecorderError.noAudioCaptured }
 
         let outputFormat = Self.makeFinalOutputFormat()
-        let outputURL = session.finalOutputURL
+        let outputURL = outputURL ?? session.finalOutputURL
         try FileManager.default.createDirectory(
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -281,6 +302,80 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         session.cleanup(removeFinalOutput: removeFinalOutput)
     }
 
+    private func startSealingLoop() {
+        sealingTask?.cancel()
+        sealingTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                let intervalNS = UInt64(max(chunkSealCheckInterval, 1) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: intervalNS)
+                guard !Task.isCancelled else { break }
+                await self.emitRollingChunksIfNeeded()
+            }
+        }
+    }
+
+    private func stopSealingLoop() async {
+        sealingTask?.cancel()
+        await sealingTask?.value
+        sealingTask = nil
+    }
+
+    private func emitRollingChunksIfNeeded() async {
+        guard let session = withActiveSession({ $0 }) else { return }
+        captureQueue.sync {}
+
+        do {
+            let snapshotURL = session.nextSnapshotOutputURL()
+            let sourceURL = try mixCapturedAudio(for: session, outputURL: snapshotURL)
+            try await emitSealedChunksIfNeeded(sourceURL: sourceURL, session: session, includeTrailingPartialChunk: false)
+        } catch {
+            MeetingLog.error("Meeting rolling chunk sealing failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func emitArtifactsIfNeeded(for audioURL: URL, session: ActiveSession) async throws {
+        guard let artifactHandler else { return }
+
+        try await emitSealedChunksIfNeeded(sourceURL: audioURL, session: session, includeTrailingPartialChunk: true)
+
+        let finalAudio = MeetingRecordingFinalAudioArtifact(
+            fileURL: audioURL,
+            durationMS: max(Int((Self.duration(of: audioURL) * 1_000).rounded()), 0)
+        )
+        await artifactHandler(.finalAudio(finalAudio))
+    }
+
+    private func emitSealedChunksIfNeeded(
+        sourceURL: URL,
+        session: ActiveSession,
+        includeTrailingPartialChunk: Bool
+    ) async throws {
+        guard let artifactHandler else { return }
+
+        let duration = Self.duration(of: sourceURL)
+        let sealedChunks: [MeetingRecordingChunkArtifact]
+        if includeTrailingPartialChunk {
+            sealedChunks = try chunkSealer.sealChunksForFinalization(
+                totalDuration: duration,
+                sourceURL: sourceURL,
+                outputDirectory: session.chunkArtifactsDirectory
+            )
+        } else {
+            sealedChunks = try chunkSealer.sealChunksIfNeeded(
+                totalDuration: duration,
+                sourceURL: sourceURL,
+                outputDirectory: session.chunkArtifactsDirectory,
+                includeTrailingPartialChunk: false
+            )
+        }
+        let newChunks = session.claimUnemittedChunks(sealedChunks)
+        for artifact in newChunks {
+            await artifactHandler(.sealedChunk(artifact))
+        }
+    }
+
     private func withActiveSession<T>(_ block: (ActiveSession?) -> T) -> T {
         stateQueue.sync {
             block(activeSession)
@@ -291,6 +386,14 @@ final class MeetingRecorder: NSObject, MeetingRecording, @unchecked Sendable {
         stateQueue.sync {
             activeSession = session
         }
+    }
+
+    static func duration(of audioURL: URL) -> TimeInterval {
+        guard let audioFile = try? AVAudioFile(forReading: audioURL),
+              audioFile.processingFormat.sampleRate > 0 else {
+            return 0
+        }
+        return Double(audioFile.length) / audioFile.processingFormat.sampleRate
     }
 }
 
@@ -357,15 +460,22 @@ private extension MeetingRecorder {
 }
 
 private final class ActiveSession {
+    private let lock = NSLock()
+    private let tempDirectory: URL
+    let chunkArtifactsDirectory: URL
     let systemAudioWriter: MeetingSourceAudioWriter
     let microphoneAudioWriter: MeetingSourceAudioWriter
     let finalOutputURL: URL
+    private var emittedChunkIndexes = Set<Int>()
+    private var snapshotCounter = 0
 
     init() throws {
-        let tempDirectory = FileManager.default.temporaryDirectory
+        tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("meeting-recordings", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        chunkArtifactsDirectory = tempDirectory.appendingPathComponent("sealed-chunks", isDirectory: true)
+        try FileManager.default.createDirectory(at: chunkArtifactsDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: MeetingRecord.meetingsDirectory, withIntermediateDirectories: true)
 
         systemAudioWriter = MeetingSourceAudioWriter(
@@ -385,10 +495,28 @@ private final class ActiveSession {
             }
     }
 
+    func nextSnapshotOutputURL() -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let outputURL = tempDirectory
+            .appendingPathComponent("snapshot-\(snapshotCounter)")
+            .appendingPathExtension("wav")
+        snapshotCounter += 1
+        return outputURL
+    }
+
+    func claimUnemittedChunks(_ artifacts: [MeetingRecordingChunkArtifact]) -> [MeetingRecordingChunkArtifact] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let newArtifacts = artifacts.filter { emittedChunkIndexes.insert($0.chunkIndex).inserted }
+        return newArtifacts.sorted { $0.chunkIndex < $1.chunkIndex }
+    }
+
     func cleanup(removeFinalOutput: Bool) {
         try? systemAudioWriter.removeIfExists()
         try? microphoneAudioWriter.removeIfExists()
-        let tempDirectory = systemAudioWriter.url.deletingLastPathComponent()
         try? FileManager.default.removeItem(at: tempDirectory)
 
         if removeFinalOutput {

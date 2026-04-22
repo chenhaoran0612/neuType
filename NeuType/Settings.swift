@@ -100,6 +100,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     init() {
+        AppPreferences.shared.sanitizeMeetingSummaryBaseURL()
         let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
@@ -118,7 +119,7 @@ class SettingsViewModel: ObservableObject {
         meetingVibeVoiceTopP = meetingConfig.topP
         meetingVibeVoiceDoSample = meetingConfig.doSample
         meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
-        meetingSummaryBaseURL = AppPreferences.shared.meetingSummaryBaseURL
+        meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
         meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
         validateMeetingShortcut()
     }
@@ -135,6 +136,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     func reloadFromPreferences() {
+        AppPreferences.shared.sanitizeMeetingSummaryBaseURL()
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
         asrAPIKey = AppPreferences.shared.asrAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.asrAPIKey
@@ -143,6 +145,18 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
+        meetingVibeVoiceBaseURL = meetingConfig.baseURL
+        meetingVibeVoiceAPIPrefix = meetingConfig.apiPrefix
+        meetingVibeVoiceAPIKey = AppPreferences.shared.meetingVibeVoiceAPIKey
+        meetingVibeVoiceContextInfo = meetingConfig.contextInfo
+        meetingVibeVoiceMaxNewTokens = Double(meetingConfig.maxNewTokens)
+        meetingVibeVoiceTemperature = meetingConfig.temperature
+        meetingVibeVoiceTopP = meetingConfig.topP
+        meetingVibeVoiceDoSample = meetingConfig.doSample
+        meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
+        meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
+        meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
         validateMeetingShortcut()
     }
 
@@ -457,7 +471,7 @@ private struct GeneralSettingsTabView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Meeting transcription uses the remote VibeVoice ASR OpenAI-compatible Chat Completions API. Base URL usually stays as https://tokenhubpro.com. You can also paste the full endpoint https://tokenhubpro.com/v1/chat/completions directly, and API Prefix is typically left empty.")
+                        Text("Meeting transcription reuses this server base URL and API key for both direct VibeVoice requests and the remote meeting session API. Point Base URL at the server root when possible; if you paste a full /v1/chat/completions endpoint, NeuType will reuse that host/path prefix for session routes. API Prefix is optional, and legacy gradio_api is ignored for remote session routes.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 

@@ -14,12 +14,21 @@ enum ScreenRecordingPermissionState: Equatable {
     case needsAuthorization
     case needsRelaunch
 
-    static func resolve(isGranted: Bool, requiresRelaunch: Bool) -> Self {
+    static func resolve(
+        isGranted: Bool,
+        requiresRelaunch: Bool,
+        hasRelaunchedSinceGrantFlow: Bool = false
+    ) -> Self {
+        _ = hasRelaunchedSinceGrantFlow
         if isGranted {
             return .granted
         }
 
-        return requiresRelaunch ? .needsRelaunch : .needsAuthorization
+        if requiresRelaunch {
+            return .needsRelaunch
+        }
+
+        return .needsAuthorization
     }
 }
 
@@ -64,8 +73,13 @@ class PermissionsManager: ObservableObject {
 
     private var permissionCheckTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
+    private let launchedWithPendingScreenRecordingRelaunch: Bool
 
     init() {
+        launchedWithPendingScreenRecordingRelaunch = AppPreferences.shared.screenRecordingPermissionPendingRelaunch
+        if launchedWithPendingScreenRecordingRelaunch {
+            AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
+        }
         checkMicrophonePermission()
         checkAccessibilityPermission()
         checkScreenRecordingPermission()
@@ -138,7 +152,7 @@ class PermissionsManager: ObservableObject {
     func checkMicrophonePermission() {
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
 
-        DispatchQueue.main.async { [weak self] in
+        updateOnMain { [weak self] in
             switch status {
             case .authorized:
                 self?.isMicrophonePermissionGranted = true
@@ -150,7 +164,7 @@ class PermissionsManager: ObservableObject {
 
     func checkAccessibilityPermission() {
         let granted = AXIsProcessTrusted()
-        DispatchQueue.main.async { [weak self] in
+        updateOnMain { [weak self] in
             guard let self else { return }
             self.isAccessibilityPermissionGranted = granted
             self.accessibilityPermissionState = AccessibilityPermissionState.resolve(
@@ -168,14 +182,16 @@ class PermissionsManager: ObservableObject {
             preflightGranted = true
         }
 
-        let requiresRelaunch = AppPreferences.shared.screenRecordingPermissionPendingRelaunch
+        let requiresRelaunch =
+            AppPreferences.shared.screenRecordingPermissionPendingRelaunch
+            || launchedWithPendingScreenRecordingRelaunch
         RequestLogStore.log(
             .usage,
-            "Screen recording preflight granted=\(preflightGranted) pendingRelaunch=\(requiresRelaunch)"
+            "Screen recording preflight granted=\(preflightGranted) pendingRelaunch=\(requiresRelaunch) launchedWithPending=\(launchedWithPendingScreenRecordingRelaunch)"
         )
 
         if preflightGranted {
-            DispatchQueue.main.async { [weak self] in
+            updateOnMain { [weak self] in
                 AppPreferences.shared.didPromptForScreenRecordingPermission = false
                 AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
                 self?.isScreenRecordingPermissionGranted = true
@@ -184,11 +200,12 @@ class PermissionsManager: ObservableObject {
             return
         }
 
-        DispatchQueue.main.async { [weak self] in
+        updateOnMain { [weak self] in
             self?.isScreenRecordingPermissionGranted = false
             self?.screenRecordingPermissionState = ScreenRecordingPermissionState.resolve(
                 isGranted: false,
-                requiresRelaunch: requiresRelaunch
+                requiresRelaunch: requiresRelaunch,
+                hasRelaunchedSinceGrantFlow: self?.launchedWithPendingScreenRecordingRelaunch == true
             )
         }
     }
@@ -245,7 +262,7 @@ class PermissionsManager: ObservableObject {
             } else {
                 AppPreferences.shared.didPromptForScreenRecordingPermission = true
                 requestGranted = CGRequestScreenCaptureAccess()
-                AppPreferences.shared.screenRecordingPermissionPendingRelaunch = requestGranted == true
+                AppPreferences.shared.screenRecordingPermissionPendingRelaunch = true
             }
 
             requestAction = ScreenRecordingPermissionRequestAction.resolve(
@@ -295,6 +312,14 @@ class PermissionsManager: ObservableObject {
             DispatchQueue.main.async {
                 NSWorkspace.shared.open(url)
             }
+        }
+    }
+
+    private func updateOnMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 }

@@ -133,6 +133,18 @@ final class AppPermissionGateTests: XCTestCase {
         )
     }
 
+
+    func testScreenRecordingStateKeepsRelaunchWhenPendingFlagExistsAfterRelaunch() {
+        XCTAssertEqual(
+            ScreenRecordingPermissionState.resolve(
+                isGranted: false,
+                requiresRelaunch: true,
+                hasRelaunchedSinceGrantFlow: true
+            ),
+            .needsRelaunch
+        )
+    }
+
     func testScreenRecordingRequestActionIsGrantedWhenPreflightSucceeds() {
         XCTAssertEqual(
             ScreenRecordingPermissionRequestAction.resolve(

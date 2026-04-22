@@ -491,16 +491,15 @@ private struct MeetingSummaryLogSheet: View {
 private struct MeetingTranscriptPane: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
     @ObservedObject private var playbackCoordinator: MeetingPlaybackCoordinator
-    @ObservedObject private var requestLogStore: RequestLogStore
     @State private var transcriptFailureDetails = ""
     @State private var showingTranscriptFailureDetails = false
+    @State private var showingTranscriptLogs = false
     private let layout: MeetingWorkspaceLayout
 
     init(viewModel: MeetingDetailViewModel, layout: MeetingWorkspaceLayout) {
         self.viewModel = viewModel
         self.layout = layout
         _playbackCoordinator = ObservedObject(wrappedValue: viewModel.playbackCoordinator)
-        _requestLogStore = ObservedObject(wrappedValue: RequestLogStore.shared)
     }
 
     var body: some View {
@@ -516,33 +515,35 @@ private struct MeetingTranscriptPane: View {
                     }
                 )
             case .processing:
-                VStack(alignment: .leading, spacing: 16) {
-                    transcriptStatusPanel(
-                        title: "正在处理音频",
-                        message: viewModel.transcriptProcessingMessage,
-                        progress: viewModel.transcriptProgress,
-                        buttonTitle: nil,
-                        action: nil
-                    )
-                    transcriptRequestLogsPanel
-                }
+                transcriptStatusPanel(
+                    title: "正在处理音频",
+                    message: viewModel.transcriptProcessingMessage,
+                    progress: viewModel.transcriptProgress,
+                    buttonTitle: nil,
+                    showsLogButton: true,
+                    logAction: {
+                        showingTranscriptLogs = true
+                    },
+                    action: nil
+                )
             case .failed(let message):
-                VStack(alignment: .leading, spacing: 16) {
-                    transcriptStatusPanel(
-                        title: "文字记录处理失败",
-                        message: message.isEmpty ? "处理过程中出现错误，请重新尝试。" : message,
-                        buttonTitle: "重新处理",
-                        secondaryButtonTitle: message.isEmpty ? nil : "查看失败原因",
-                        secondaryAction: message.isEmpty ? nil : {
-                            transcriptFailureDetails = message
-                            showingTranscriptFailureDetails = true
-                        },
-                        action: {
-                            viewModel.startTranscriptProcessing()
-                        }
-                    )
-                    transcriptRequestLogsPanel
-                }
+                transcriptStatusPanel(
+                    title: "文字记录处理失败",
+                    message: message.isEmpty ? "处理过程中出现错误，请重新尝试。" : message,
+                    buttonTitle: "重新处理",
+                    secondaryButtonTitle: message.isEmpty ? nil : "查看失败原因",
+                    secondaryAction: message.isEmpty ? nil : {
+                        transcriptFailureDetails = message
+                        showingTranscriptFailureDetails = true
+                    },
+                    showsLogButton: true,
+                    logAction: {
+                        showingTranscriptLogs = true
+                    },
+                    action: {
+                        viewModel.startTranscriptProcessing()
+                    }
+                )
             case .completed:
                 HStack(spacing: 12) {
                     HStack {
@@ -642,52 +643,9 @@ private struct MeetingTranscriptPane: View {
         } message: {
             Text(transcriptFailureDetails)
         }
-    }
-
-    @ViewBuilder
-    private var transcriptRequestLogsPanel: some View {
-        let logs = viewModel.transcriptRequestLogs
-        VStack(alignment: .leading, spacing: 12) {
-            Text("请求日志")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            if logs.isEmpty {
-                Text("暂无请求日志")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(logs) { entry in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.tertiary)
-                                Text(entry.message)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-                .frame(minHeight: 90, maxHeight: 180)
-            }
+        .sheet(isPresented: $showingTranscriptLogs) {
+            MeetingTranscriptLogSheet(viewModel: viewModel)
         }
-        .padding(16)
-        .frame(maxWidth: 560, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.black.opacity(0.025))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.black.opacity(0.08), lineWidth: 1)
-        )
-        .id(requestLogStore.entries.count)
     }
 
     @ViewBuilder
@@ -698,12 +656,27 @@ private struct MeetingTranscriptPane: View {
         buttonTitle: String?,
         secondaryButtonTitle: String? = nil,
         secondaryAction: (() -> Void)? = nil,
+        showsLogButton: Bool = false,
+        logAction: (() -> Void)? = nil,
         action: (() -> Void)?
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.primary)
+            HStack(alignment: .top, spacing: 12) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                if showsLogButton, let logAction {
+                    Button(action: logAction) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("查看请求日志")
+                }
+            }
 
             let messageLines = splitMeetingStatusMessage(message)
             VStack(alignment: .leading, spacing: 4) {
@@ -806,6 +779,93 @@ private struct MeetingTranscriptPane: View {
         }
     }
 
+}
+
+private struct MeetingTranscriptLogSheet: View {
+    @ObservedObject var viewModel: MeetingDetailViewModel
+    @ObservedObject private var requestLogStore = RequestLogStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopyLog = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("请求日志")
+                    .font(.system(size: 16, weight: .semibold))
+
+                Spacer()
+
+                Button {
+                    let payload = viewModel.transcriptRequestLogs
+                        .map { "\($0.timestamp.formatted(date: .omitted, time: .standard))  \($0.message)" }
+                        .joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(payload, forType: .string)
+                    didCopyLog = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1.5))
+                        didCopyLog = false
+                    }
+                } label: {
+                    Label(didCopyLog ? "已复制" : "复制", systemImage: didCopyLog ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("关闭") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            ScrollView(showsIndicators: false) {
+                transcriptRequestLogsContent
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.black.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+            .id(requestLogStore.entries.count)
+        }
+        .padding(20)
+        .frame(minWidth: 720, minHeight: 420)
+    }
+
+    @ViewBuilder
+    private var transcriptRequestLogsContent: some View {
+        let logs = viewModel.transcriptRequestLogs
+
+        if logs.isEmpty {
+            Text("暂无请求日志")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                ForEach(logs) { entry in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        Text(entry.message)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 
 private func splitMeetingStatusMessage(_ message: String) -> (title: String, detail: String?) {

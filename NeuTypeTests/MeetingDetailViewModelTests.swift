@@ -551,6 +551,86 @@ final class MeetingDetailViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSummaryLogDisplayTextSynthesizesRemoteSnapshotWhenRawJSONMissing() async throws {
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "客户周会",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .completed,
+            summaryExternalMeetingID: "meeting-123",
+            summaryJobID: "job-456",
+            summaryTaskID: "task-789",
+            summaryPollURL: "/api/integrations/neutype/meetings/job-456",
+            summaryText: "摘要内容",
+            summaryFullText: "# 完整纪要",
+            summaryResultJSON: #"{"meeting_title":"客户周会","summary":"摘要内容","key_points":[],"action_items":[],"risks":[],"share_summary":""}"#,
+            summaryLastResponseJSON: "",
+            summaryShareURL: "https://ai-worker.neuxnet.com/share/job-456",
+            summaryErrorMessage: ""
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.shouldShowSummaryLogButton)
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"job_id\" : \"job-456\""))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"full_text\" : \"# 完整纪要\""))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"share_url\" : "))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("job-456"))
+        XCTAssertFalse(viewModel.summaryLogDisplayText.contains("日志采集上线之前"))
+    }
+
+    @MainActor
+    func testSummaryLogDisplayTextSynthesizesFailedRemoteErrorWhenRawJSONMissing() async throws {
+        let meeting = MeetingRecord(
+            id: UUID(),
+            createdAt: Date(),
+            title: "工作进展与项目安排",
+            audioFileName: "meeting.wav",
+            transcriptPreview: "",
+            duration: 0,
+            status: .completed,
+            progress: 0,
+            summaryStatus: .failed,
+            summaryJobID: "",
+            summaryText: "",
+            summaryFullText: "",
+            summaryResultJSON: "",
+            summaryLastResponseJSON: "",
+            summaryShareURL: "",
+            summaryErrorMessage: #"ai-worker 请求失败（404）：{"detail":"Not Found"}"#
+        )
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+
+        XCTAssertTrue(viewModel.shouldShowSummaryLogButton)
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"status\" : \"failed\""))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\n  \"error_message\" : "))
+        XCTAssertTrue(viewModel.summaryLogDisplayText.contains("\"detail\" : \"Not Found\""))
+        XCTAssertFalse(viewModel.summaryLogDisplayText.contains("日志采集上线之前"))
+    }
+
+    @MainActor
     func testTranscriptSearchFiltersSegments() async throws {
         let meeting = MeetingRecord.fixture(status: .completed)
         let store = try MeetingRecordStore.inMemory()

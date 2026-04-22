@@ -317,6 +317,9 @@ final class MeetingDetailViewModel: ObservableObject {
         if hasSummaryLastResponseJSON {
             return prettyPrintedSummaryLastResponseJSON
         }
+        if let synthesizedSummaryLogJSON {
+            return Self.prettyPrintedJSON(synthesizedSummaryLogJSON)
+        }
         return """
         这条会议的总结生成于日志采集上线之前，当前本地没有保存原始接口 JSON。
 
@@ -388,6 +391,71 @@ final class MeetingDetailViewModel: ObservableObject {
             return trimmed
         }
         return pretty
+    }
+
+    private var synthesizedSummaryLogJSON: String? {
+        guard let meeting else { return nil }
+        guard shouldSynthesizeSummaryLogJSON(for: meeting) else { return nil }
+
+        var payload: [String: Any] = [
+            "job_id": meeting.summaryJobID,
+            "external_meeting_id": meeting.summaryExternalMeetingID,
+            "task_id": meeting.summaryTaskID,
+            "status": meeting.summaryStatus.rawValue,
+            "meeting_title": meeting.title,
+            "summary_text": meeting.summaryText,
+            "full_text": meeting.summaryFullText,
+            "share_url": meeting.summaryShareURL,
+            "error_message": meeting.summaryErrorMessage,
+            "poll_url": meeting.summaryPollURL,
+        ]
+
+        if let resultObject = decodedJSONObject(from: meeting.summaryResultJSON) {
+            payload["result_json"] = resultObject
+        }
+        if let errorResponseObject = extractedErrorResponseJSONObject(from: meeting.summaryErrorMessage) {
+            payload["error_response"] = errorResponseObject
+        }
+
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return json
+    }
+
+    private func shouldSynthesizeSummaryLogJSON(for meeting: MeetingRecord) -> Bool {
+        !meeting.summaryJobID.isEmpty
+            || !meeting.summaryTaskID.isEmpty
+            || !meeting.summaryExternalMeetingID.isEmpty
+            || !meeting.summaryPollURL.isEmpty
+            || !meeting.summaryErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func decodedJSONObject(from raw: String) -> Any? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let data = trimmed.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private func extractedErrorResponseJSONObject(from raw: String) -> Any? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let direct = decodedJSONObject(from: trimmed) {
+            return direct
+        }
+
+        guard let jsonStartIndex = trimmed.firstIndex(of: "{") else {
+            return nil
+        }
+
+        let candidate = String(trimmed[jsonStartIndex...])
+        return decodedJSONObject(from: candidate)
     }
 
     private static func firstSummarySectionRange(in text: String) -> Range<String.Index>? {

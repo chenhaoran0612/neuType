@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import NeuType
 
@@ -75,14 +76,15 @@ final class MeetingRecorderViewModelTests: XCTestCase {
             microphoneGranted: true,
             screenGranted: true
         )
-        let recorder = StubMeetingRecorder(stopRecordingURL: temporaryAudioURL())
+        let recorder = StubMeetingRecorder(stopRecordingURL: makeTemporaryAudioURL(duration: 1))
         let store = try! MeetingRecordStore.inMemory()
         let transcriptionService = StubMeetingTranscriptionService()
         let viewModel = MeetingRecorderViewModel(
             permissions: permissions,
             recorder: recorder,
             store: store,
-            transcriptionService: transcriptionService
+            transcriptionService: transcriptionService,
+            remoteCoordinatorFactory: nil
         )
         await viewModel.startRecording()
 
@@ -115,7 +117,7 @@ final class MeetingRecorderViewModelTests: XCTestCase {
             microphoneGranted: true,
             screenGranted: true
         )
-        let audioURL = temporaryAudioURL()
+        let audioURL = makeTemporaryAudioURL(duration: 1)
         let recorder = StubMeetingRecorder(stopRecordingURL: audioURL)
         let store = try MeetingRecordStore.inMemory()
         let transcriptionService = StubMeetingTranscriptionService(delayNanoseconds: 200_000_000)
@@ -125,7 +127,8 @@ final class MeetingRecorderViewModelTests: XCTestCase {
             recorder: recorder,
             store: store,
             transcriptionService: transcriptionService,
-            summaryService: summaryService
+            summaryService: summaryService,
+            remoteCoordinatorFactory: nil
         )
 
         await viewModel.startRecording()
@@ -140,10 +143,50 @@ final class MeetingRecorderViewModelTests: XCTestCase {
         XCTAssertEqual(savedMeeting?.status, .processing)
         XCTAssertFalse(savedMeeting?.title.hasPrefix("Meeting ") ?? true)
 
-        try? await Task.sleep(for: .milliseconds(300))
-
+        let didFinishPostProcessing = await waitUntil {
+            transcriptionService.transcribedAudioURLs == [audioURL]
+                && summaryService.submittedMeetingIDs == [meetingID]
+        }
+        XCTAssertTrue(didFinishPostProcessing)
         XCTAssertEqual(transcriptionService.transcribedAudioURLs, [audioURL])
         XCTAssertEqual(summaryService.submittedMeetingIDs, [meetingID])
+    }
+
+    @MainActor
+    func testStopRecordingUsesRemoteCoordinatorInsteadOfDirectTranscribe() async throws {
+        let permissions = StubMeetingPermissions(
+            microphoneGranted: true,
+            screenGranted: true
+        )
+        let audioURL = makeTemporaryAudioURL(duration: 1)
+        let recorder = StubMeetingRecorder(
+            stopRecordingURL: audioURL,
+            artifactsToEmitOnStop: [
+                .sealedChunk(.init(chunkIndex: 0, startMS: 0, endMS: 300_000, fileURL: audioURL)),
+                .finalAudio(.init(fileURL: audioURL, durationMS: 1_000))
+            ]
+        )
+        let store = try MeetingRecordStore.inMemory()
+        let transcriptionService = StubMeetingTranscriptionService()
+        let coordinator = StubMeetingRemoteSessionCoordinator(result: .remoteFixture())
+        let viewModel = MeetingRecorderViewModel(
+            permissions: permissions,
+            recorder: recorder,
+            store: store,
+            transcriptionService: transcriptionService,
+            summaryService: StubMeetingSummaryService(),
+            remoteCoordinatorFactory: { _ in coordinator }
+        )
+
+        await viewModel.startRecording()
+        await viewModel.stopRecording()
+        try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(transcriptionService.transcribedMeetingIDs.count, 0)
+        XCTAssertEqual(coordinator.handledChunks.map(\.chunkIndex), [0])
+        XCTAssertEqual(coordinator.finalizeCalls.count, 1)
+        XCTAssertEqual(coordinator.finalizeCalls.first?.expectedChunkCount, 1)
+        XCTAssertEqual(coordinator.pollCalls, 1)
     }
 }
 
@@ -170,13 +213,19 @@ private final class StubMeetingPermissions: MeetingPermissionChecking {
     }
 }
 
-private final class StubMeetingRecorder: MeetingRecording, @unchecked Sendable {
+private final class StubMeetingRecorder: MeetingRecording, MeetingRecordingArtifactProducing, @unchecked Sendable {
     private(set) var startCalls = 0
     private(set) var stopCalls = 0
     private let stopRecordingURL: URL?
+    private let artifactsToEmitOnStop: [MeetingRecordingArtifact]
+    var artifactHandler: (@Sendable (MeetingRecordingArtifact) async -> Void)?
 
-    init(stopRecordingURL: URL? = nil) {
+    init(
+        stopRecordingURL: URL? = nil,
+        artifactsToEmitOnStop: [MeetingRecordingArtifact] = []
+    ) {
         self.stopRecordingURL = stopRecordingURL
+        self.artifactsToEmitOnStop = artifactsToEmitOnStop
     }
 
     func startRecording() async throws {
@@ -185,6 +234,9 @@ private final class StubMeetingRecorder: MeetingRecording, @unchecked Sendable {
 
     func stopRecording() async throws -> URL? {
         stopCalls += 1
+        for artifact in artifactsToEmitOnStop {
+            await artifactHandler?(artifact)
+        }
         return stopRecordingURL
     }
 
@@ -219,6 +271,30 @@ private final class StubMeetingSummaryService: MeetingSummarizing, @unchecked Se
     func resumeMeeting(meetingID: UUID) async throws {}
 }
 
+private final class StubMeetingRemoteSessionCoordinator: MeetingRemoteSessionCoordinating, @unchecked Sendable {
+    let result: RemoteMeetingTranscriptResult
+    private(set) var handledChunks: [MeetingRecordingChunkArtifact] = []
+    private(set) var finalizeCalls: [(fullAudioURL: URL, expectedChunkCount: Int)] = []
+    private(set) var pollCalls = 0
+
+    init(result: RemoteMeetingTranscriptResult) {
+        self.result = result
+    }
+
+    func handleSealedChunk(_ artifact: MeetingRecordingChunkArtifact) async {
+        handledChunks.append(artifact)
+    }
+
+    func finalizeWithRecording(fullAudioURL: URL, expectedChunkCount: Int) async throws {
+        finalizeCalls.append((fullAudioURL, expectedChunkCount))
+    }
+
+    func pollUntilCompleted() async throws -> RemoteMeetingTranscriptResult {
+        pollCalls += 1
+        return result
+    }
+}
+
 private final class StubMeetingAppController: MeetingAppControlling {
     private(set) var relaunchCalls = 0
 
@@ -227,10 +303,57 @@ private final class StubMeetingAppController: MeetingAppControlling {
     }
 }
 
-private func temporaryAudioURL() -> URL {
+private func makeTemporaryAudioURL(duration: TimeInterval) -> URL {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension("wav")
-    _ = FileManager.default.createFile(atPath: url.path, contents: Data(), attributes: nil)
+    let format = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 16_000,
+        channels: 1,
+        interleaved: false
+    )!
+    let frameCount = AVAudioFrameCount((duration * format.sampleRate).rounded())
+    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+    buffer.frameLength = frameCount
+    if let channel = buffer.int16ChannelData?.pointee {
+        for index in 0 ..< Int(frameCount) {
+            channel[index] = Int16(index % Int(Int16.max))
+        }
+    }
+    let file = try? AVAudioFile(
+        forWriting: url,
+        settings: format.settings,
+        commonFormat: format.commonFormat,
+        interleaved: format.isInterleaved
+    )
+    try? file?.write(from: buffer)
     return url
+}
+
+private func waitUntil(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    intervalNanoseconds: UInt64 = 20_000_000,
+    condition: @escaping () -> Bool
+) async -> Bool {
+    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+    while DispatchTime.now().uptimeNanoseconds < deadline {
+        if condition() {
+            return true
+        }
+        try? await Task.sleep(nanoseconds: intervalNanoseconds)
+    }
+    return condition()
+}
+
+private extension RemoteMeetingTranscriptResult {
+    static func remoteFixture() -> RemoteMeetingTranscriptResult {
+        .init(
+            fullText: "hello world",
+            segments: [
+                .init(sequence: 0, speakerLabel: "Speaker 1", startMS: 0, endMS: 1_000, text: "hello"),
+                .init(sequence: 1, speakerLabel: "Speaker 2", startMS: 1_000, endMS: 2_000, text: "world"),
+            ]
+        )
+    }
 }

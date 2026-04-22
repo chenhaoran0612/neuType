@@ -2,6 +2,12 @@ import XCTest
 @testable import NeuType
 
 final class MeetingTranscriptionServiceTests: XCTestCase {
+    @MainActor
+    override func tearDown() {
+        RequestLogStore.shared.clear()
+        super.tearDown()
+    }
+
     func testTranscribeMeetingPersistsSegmentsAndPreview() async throws {
         let runner = StubVibeVoiceRunnerClient(result: .fixture())
         let store = try MeetingRecordStore.inMemory()
@@ -19,6 +25,74 @@ final class MeetingTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(saved?.status, .completed)
         XCTAssertEqual(saved?.transcriptPreview, "hello world")
         XCTAssertEqual(segments.count, 2)
+    }
+
+    func testRemoteCoordinatorPersistsSegmentsAndPreview() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = MeetingRecord.fixture(status: .processing)
+        try await store.insertMeeting(meeting, segments: [])
+        let coordinator = StubMeetingRemoteSessionCoordinator(result: .remoteFixture())
+        let service = MeetingTranscriptionService(coordinator: coordinator, store: store)
+
+        try await service.transcribe(
+            meetingID: meeting.id,
+            audioURL: URL(fileURLWithPath: "/tmp/meeting-remote.wav")
+        )
+
+        let saved = try await store.fetchMeeting(id: meeting.id)
+        let segments = try await store.fetchSegments(meetingID: meeting.id)
+        XCTAssertEqual(saved?.status, .completed)
+        XCTAssertEqual(saved?.transcriptPreview, "hello world")
+        XCTAssertEqual(segments.map(\.text), ["hello", "world"])
+        XCTAssertEqual(coordinator.finalizeCalls.count, 1)
+        XCTAssertEqual(coordinator.finalizeCalls.first?.expectedChunkCount, 0)
+        XCTAssertEqual(coordinator.pollCalls, 1)
+    }
+
+    func testRemoteCoordinatorFailurePersistsFailedStatusAndPreview() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = MeetingRecord.fixture(status: .processing, progress: 0.4)
+        try await store.insertMeeting(meeting, segments: [])
+        let coordinator = FailingMeetingRemoteSessionCoordinator(errorMessage: "GPU worker exhausted retries")
+        let service = MeetingTranscriptionService(coordinator: coordinator, store: store)
+
+        do {
+            try await service.transcribe(
+                meetingID: meeting.id,
+                audioURL: URL(fileURLWithPath: "/tmp/meeting-remote-failed.wav")
+            )
+            XCTFail("Expected remote transcription failure")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "GPU worker exhausted retries")
+        }
+
+        let saved = try await store.fetchMeeting(id: meeting.id)
+        let segments = try await store.fetchSegments(meetingID: meeting.id)
+        XCTAssertEqual(saved?.status, .failed)
+        XCTAssertEqual(saved?.progress, 0)
+        XCTAssertEqual(saved?.transcriptPreview, "GPU worker exhausted retries")
+        XCTAssertTrue(segments.isEmpty)
+    }
+
+    @MainActor
+    func testRemoteCoordinatorLogsAreScopedToMeetingContext() async throws {
+        RequestLogStore.shared.clear()
+
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = MeetingRecord.fixture(status: .processing)
+        try await store.insertMeeting(meeting, segments: [])
+        let coordinator = LoggingMeetingRemoteSessionCoordinator(result: .remoteFixture())
+        let service = MeetingTranscriptionService(coordinator: coordinator, store: store)
+
+        try await service.transcribe(
+            meetingID: meeting.id,
+            audioURL: URL(fileURLWithPath: "/tmp/meeting-remote-logs.wav")
+        )
+
+        let entries = RequestLogStore.shared.entries.filter { $0.kind == .asr }
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(Set(entries.map(\.meetingID)), [meeting.id])
+        XCTAssertEqual(entries.map(\.message), ["stub remote finalize", "stub remote poll"])
     }
 
     func testConcurrentTranscriptionsOnSharedServiceKeepMeetingResultsSeparated() async throws {
@@ -105,6 +179,62 @@ private struct ConcurrentStubVibeVoiceRunnerClient: VibeVoiceRunning {
     }
 }
 
+private final class StubMeetingRemoteSessionCoordinator: MeetingRemoteSessionCoordinating {
+    let result: RemoteMeetingTranscriptResult
+    private(set) var finalizeCalls: [(fullAudioURL: URL, expectedChunkCount: Int)] = []
+    private(set) var pollCalls = 0
+
+    init(result: RemoteMeetingTranscriptResult) {
+        self.result = result
+    }
+
+    func handleSealedChunk(_ artifact: MeetingRecordingChunkArtifact) async {}
+
+    func finalizeWithRecording(fullAudioURL: URL, expectedChunkCount: Int) async throws {
+        finalizeCalls.append((fullAudioURL, expectedChunkCount))
+    }
+
+    func pollUntilCompleted() async throws -> RemoteMeetingTranscriptResult {
+        pollCalls += 1
+        return result
+    }
+}
+
+private final class FailingMeetingRemoteSessionCoordinator: MeetingRemoteSessionCoordinating {
+    let errorMessage: String
+
+    init(errorMessage: String) {
+        self.errorMessage = errorMessage
+    }
+
+    func handleSealedChunk(_ artifact: MeetingRecordingChunkArtifact) async {}
+
+    func finalizeWithRecording(fullAudioURL: URL, expectedChunkCount: Int) async throws {}
+
+    func pollUntilCompleted() async throws -> RemoteMeetingTranscriptResult {
+        throw MeetingRemoteSessionCoordinatorError.sessionFailed(errorMessage)
+    }
+}
+
+private final class LoggingMeetingRemoteSessionCoordinator: MeetingRemoteSessionCoordinating {
+    let result: RemoteMeetingTranscriptResult
+
+    init(result: RemoteMeetingTranscriptResult) {
+        self.result = result
+    }
+
+    func handleSealedChunk(_ artifact: MeetingRecordingChunkArtifact) async {}
+
+    func finalizeWithRecording(fullAudioURL: URL, expectedChunkCount: Int) async throws {
+        RequestLogStore.log(.asr, "stub remote finalize")
+    }
+
+    func pollUntilCompleted() async throws -> RemoteMeetingTranscriptResult {
+        RequestLogStore.log(.asr, "stub remote poll")
+        return result
+    }
+}
+
 private extension MeetingTranscriptionResult {
     static func fixture() -> MeetingTranscriptionResult {
         MeetingTranscriptionResult(
@@ -124,6 +254,18 @@ private extension MeetingTranscriptionResult {
                     endTime: 2,
                     text: "world"
                 ),
+            ]
+        )
+    }
+}
+
+private extension RemoteMeetingTranscriptResult {
+    static func remoteFixture() -> RemoteMeetingTranscriptResult {
+        .init(
+            fullText: "hello world",
+            segments: [
+                .init(sequence: 0, speakerLabel: "Speaker 1", startMS: 0, endMS: 1_000, text: "hello"),
+                .init(sequence: 1, speakerLabel: "Speaker 2", startMS: 1_000, endMS: 2_000, text: "world"),
             ]
         )
     }

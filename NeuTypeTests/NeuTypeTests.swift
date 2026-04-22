@@ -1200,6 +1200,58 @@ final class VisibleSettingsStoreTests: XCTestCase {
 }
 
 @MainActor
+final class AppBootstrapDefaultsTests: XCTestCase {
+    private var originalWhisperLanguage: Any?
+    private var originalUseAsianAutocorrect: Any?
+    private var originalHasCompletedOnboarding: Any?
+
+    override func setUpWithError() throws {
+        let defaults = UserDefaults.standard
+        originalWhisperLanguage = defaults.object(forKey: "whisperLanguage")
+        originalUseAsianAutocorrect = defaults.object(forKey: "useAsianAutocorrect")
+        originalHasCompletedOnboarding = defaults.object(forKey: "hasCompletedOnboarding")
+    }
+
+    override func tearDownWithError() throws {
+        let defaults = UserDefaults.standard
+        if let originalWhisperLanguage {
+            defaults.set(originalWhisperLanguage, forKey: "whisperLanguage")
+        } else {
+            defaults.removeObject(forKey: "whisperLanguage")
+        }
+        if let originalUseAsianAutocorrect {
+            defaults.set(originalUseAsianAutocorrect, forKey: "useAsianAutocorrect")
+        } else {
+            defaults.removeObject(forKey: "useAsianAutocorrect")
+        }
+        if let originalHasCompletedOnboarding {
+            defaults.set(originalHasCompletedOnboarding, forKey: "hasCompletedOnboarding")
+        } else {
+            defaults.removeObject(forKey: "hasCompletedOnboarding")
+        }
+    }
+
+    func testFreshInstallDefaultsUseAutoLanguageAndAsianAutocorrect() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "whisperLanguage")
+        defaults.removeObject(forKey: "useAsianAutocorrect")
+
+        let prefs = AppPreferences.shared
+
+        XCTAssertEqual(prefs.whisperLanguage, "auto")
+        XCTAssertTrue(prefs.useAsianAutocorrect)
+    }
+
+    func testFreshInstallAppStateSkipsOnboarding() {
+        UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
+
+        let state = AppState()
+
+        XCTAssertTrue(state.hasCompletedOnboarding)
+    }
+}
+
+@MainActor
 final class SettingsViewModelImportExportTests: XCTestCase {
     private var originalModifierOnlyHotkey: String!
     private var originalIndicatorOriginX: Double?

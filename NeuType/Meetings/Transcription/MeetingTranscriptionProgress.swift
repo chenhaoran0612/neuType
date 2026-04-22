@@ -5,6 +5,7 @@ struct MeetingTranscriptionProgress: Equatable, Sendable {
         case preparingAudio
         case analyzingAudio
         case uploadingAudio
+        case waitingForRemoteResult
         case transcribing
         case finalizing
     }
@@ -73,6 +74,16 @@ struct MeetingTranscriptionProgress: Equatable, Sendable {
             stage: .finalizing,
             fractionCompleted: 0.94,
             message: "正在合并与整理结果\n去重重叠片段并修正时间轴…",
+            completedUnitCount: 0,
+            totalUnitCount: 0
+        )
+    }
+
+    static func waitingForRemoteResult() -> MeetingTranscriptionProgress {
+        MeetingTranscriptionProgress(
+            stage: .waitingForRemoteResult,
+            fractionCompleted: 0.72,
+            message: "服务端处理中\n正在等待远端转写结果返回…",
             completedUnitCount: 0,
             totalUnitCount: 0
         )

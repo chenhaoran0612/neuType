@@ -41,11 +41,7 @@ struct NeuTypeApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if !appState.hasCompletedOnboarding {
-                    OnboardingView()
-                } else {
-                    ContentView()
-                }
+                ContentView()
             }
             .frame(minWidth: 620, idealWidth: 680)
             .frame(minHeight: 720, idealHeight: 820, maxHeight: 980)
