@@ -100,6 +100,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     init() {
+        AppPreferences.shared.sanitizeMeetingSummaryBaseURL()
         let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
@@ -118,7 +119,7 @@ class SettingsViewModel: ObservableObject {
         meetingVibeVoiceTopP = meetingConfig.topP
         meetingVibeVoiceDoSample = meetingConfig.doSample
         meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
-        meetingSummaryBaseURL = AppPreferences.shared.meetingSummaryBaseURL
+        meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
         meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
         validateMeetingShortcut()
     }
@@ -135,6 +136,7 @@ class SettingsViewModel: ObservableObject {
     }
 
     func reloadFromPreferences() {
+        AppPreferences.shared.sanitizeMeetingSummaryBaseURL()
         modifierOnlyHotkey = ModifierKey(rawValue: AppPreferences.shared.modifierOnlyHotkey) ?? .leftControl
         asrAPIBaseURL = AppPreferences.shared.asrAPIBaseURL
         asrAPIKey = AppPreferences.shared.asrAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.asrAPIKey
@@ -143,6 +145,18 @@ class SettingsViewModel: ObservableObject {
         llmAPIKey = AppPreferences.shared.llmAPIKey.isEmpty ? AppPreferences.shared.groqAPIKey : AppPreferences.shared.llmAPIKey
         llmModel = AppPreferences.shared.llmModel
         llmOptimizationPrompt = AppPreferences.shared.llmOptimizationPrompt
+        let meetingConfig = AppPreferences.shared.meetingVibeVoiceConfig
+        meetingVibeVoiceBaseURL = meetingConfig.baseURL
+        meetingVibeVoiceAPIPrefix = meetingConfig.apiPrefix
+        meetingVibeVoiceAPIKey = AppPreferences.shared.meetingVibeVoiceAPIKey
+        meetingVibeVoiceContextInfo = meetingConfig.contextInfo
+        meetingVibeVoiceMaxNewTokens = Double(meetingConfig.maxNewTokens)
+        meetingVibeVoiceTemperature = meetingConfig.temperature
+        meetingVibeVoiceTopP = meetingConfig.topP
+        meetingVibeVoiceDoSample = meetingConfig.doSample
+        meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
+        meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
+        meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
         validateMeetingShortcut()
     }
 

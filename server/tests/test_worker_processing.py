@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import struct
 import wave
 
 import pytest
@@ -346,6 +347,41 @@ class WorkerHarness:
         return buffer.getvalue()
 
     @staticmethod
+    def _float_wav_bytes_with_duration(
+        duration_ms: int, sample_value: float = 0.25
+    ) -> bytes:
+        frame_rate = 1000
+        channel_count = 1
+        bits_per_sample = 32
+        frame_count = duration_ms
+        data = struct.pack("<f", sample_value) * frame_count
+        byte_rate = frame_rate * channel_count * bits_per_sample // 8
+        block_align = channel_count * bits_per_sample // 8
+        riff_size = 4 + (8 + 16) + (8 + len(data))
+
+        buffer = io.BytesIO()
+        buffer.write(b"RIFF")
+        buffer.write(struct.pack("<I", riff_size))
+        buffer.write(b"WAVE")
+        buffer.write(b"fmt ")
+        buffer.write(
+            struct.pack(
+                "<IHHIIHH",
+                16,
+                3,
+                channel_count,
+                frame_rate,
+                byte_rate,
+                block_align,
+                bits_per_sample,
+            )
+        )
+        buffer.write(b"data")
+        buffer.write(struct.pack("<I", len(data)))
+        buffer.write(data)
+        return buffer.getvalue()
+
+    @staticmethod
     def _fetch_chunk(db, public_session_id: str, chunk_index: int, source_type: str) -> SessionChunk:
         session = db.query(TranscriptionSession).filter_by(session_id=public_session_id).one()
         return (
@@ -479,6 +515,63 @@ def test_worker_creates_anchor_then_uses_prefix_plan_and_persists_normalized_seg
     ]
     assert second_chunk.result_segment_count == 1
 
+
+def test_advance_commit_frontier_skips_unsupported_float_wav_anchor_sources(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks(indexes=[])
+
+    db = worker_harness.session_factory()
+    try:
+        db_session = (
+            db.query(TranscriptionSession).filter_by(session_id=session.session_id).one()
+        )
+        payload = WorkerHarness._float_wav_bytes_with_duration(300000)
+        storage_path = worker_harness.storage.session_path(
+            db_session.session_id, "live-chunks", "0.wav"
+        )
+        worker_harness.storage.write_bytes(storage_path, payload)
+        db.add(
+            SessionChunk(
+                session_id=db_session.id,
+                chunk_index=0,
+                source_type="live_chunk",
+                start_ms=0,
+                end_ms=300000,
+                duration_ms=300000,
+                sha256=hashlib.sha256(payload).hexdigest(),
+                storage_path=storage_path,
+                upload_status="uploaded",
+                process_status="processed",
+                result_segment_count=1,
+                normalized_segments_json=json.dumps(
+                    [
+                        {
+                            "text": "hello from float wav",
+                            "start_ms": 1000,
+                            "end_ms": 2500,
+                            "speaker_label": "Speaker 1",
+                        }
+                    ]
+                ),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    worker_harness.finalize(session.session_id, expected_chunk_count=1)
+
+    assert worker_harness.run_once() is True
+
+    refreshed = worker_harness.fetch_session(session.session_id)
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    anchors = worker_harness.list_speaker_anchors(session.session_id)
+
+    assert refreshed.status == "completed"
+    assert refreshed.last_committed_chunk_index == 0
+    assert chunk.process_status == "completed"
+    assert anchors == []
 
 
 def test_worker_uses_raw_path_without_anchors_and_prefixed_artifact_path_with_anchors(

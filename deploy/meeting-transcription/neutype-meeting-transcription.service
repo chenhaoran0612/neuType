@@ -1,0 +1,30 @@
+[Unit]
+Description=NeuType Meeting Transcription Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neutype
+Group=neutype
+WorkingDirectory=/opt/neutype/meeting-transcription/app/server
+EnvironmentFile=/etc/neutype-meeting-transcription.env
+
+# Current implementation runs API + in-process background worker together.
+# Keep this as a single uvicorn process. Do NOT add `--workers N` until worker
+# execution is split out and protected by explicit task locking/queueing.
+ExecStart=/opt/neutype/meeting-transcription/.venv/bin/uvicorn meeting_transcription.app:create_app --factory --host 127.0.0.1 --port 8000
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/neutype/meeting-transcription/data /opt/neutype/meeting-transcription/artifacts /opt/neutype/meeting-transcription/logs
+
+[Install]
+WantedBy=multi-user.target
+

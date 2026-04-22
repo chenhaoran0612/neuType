@@ -7,8 +7,7 @@ struct MeetingSummaryConfig: Equatable, Sendable {
     let apiKey: String
 
     var normalizedBaseURL: String {
-        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? Self.defaultBaseURL : trimmed
+        Self.defaultBaseURL
     }
 
     var trimmedAPIKey: String {

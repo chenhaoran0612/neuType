@@ -129,8 +129,36 @@ struct MeetingRemoteTranscriptionSessionStatusResponse: Codable, Equatable, Send
     let chunkOverlapMS: Int?
     let expectedChunkCount: Int?
     let uploadedChunkCount: Int?
+    let errorMessage: String?
     let fullText: String?
     let segments: [RemoteMeetingTranscriptSegment]?
+    let chunks: [MeetingRemoteTranscriptionChunkStatus]
+
+    init(
+        sessionID: String,
+        status: String,
+        inputMode: String,
+        chunkDurationMS: Int?,
+        chunkOverlapMS: Int?,
+        expectedChunkCount: Int?,
+        uploadedChunkCount: Int?,
+        errorMessage: String?,
+        fullText: String?,
+        segments: [RemoteMeetingTranscriptSegment]?,
+        chunks: [MeetingRemoteTranscriptionChunkStatus] = []
+    ) {
+        self.sessionID = sessionID
+        self.status = status
+        self.inputMode = inputMode
+        self.chunkDurationMS = chunkDurationMS
+        self.chunkOverlapMS = chunkOverlapMS
+        self.expectedChunkCount = expectedChunkCount
+        self.uploadedChunkCount = uploadedChunkCount
+        self.errorMessage = errorMessage
+        self.fullText = fullText
+        self.segments = segments
+        self.chunks = chunks
+    }
 
     var transcriptResult: RemoteMeetingTranscriptResult? {
         guard let fullText, let segments else { return nil }
@@ -145,8 +173,49 @@ struct MeetingRemoteTranscriptionSessionStatusResponse: Codable, Equatable, Send
         case chunkOverlapMS = "chunk_overlap_ms"
         case expectedChunkCount = "expected_chunk_count"
         case uploadedChunkCount = "uploaded_chunk_count"
+        case errorMessage = "error_message"
         case fullText = "full_text"
         case segments
+        case chunks
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        status = try container.decode(String.self, forKey: .status)
+        inputMode = try container.decode(String.self, forKey: .inputMode)
+        chunkDurationMS = try container.decodeIfPresent(Int.self, forKey: .chunkDurationMS)
+        chunkOverlapMS = try container.decodeIfPresent(Int.self, forKey: .chunkOverlapMS)
+        expectedChunkCount = try container.decodeIfPresent(Int.self, forKey: .expectedChunkCount)
+        uploadedChunkCount = try container.decodeIfPresent(Int.self, forKey: .uploadedChunkCount)
+        errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+        fullText = try container.decodeIfPresent(String.self, forKey: .fullText)
+        segments = try container.decodeIfPresent([RemoteMeetingTranscriptSegment].self, forKey: .segments)
+        chunks = try container.decodeIfPresent([MeetingRemoteTranscriptionChunkStatus].self, forKey: .chunks) ?? []
+    }
+}
+
+struct MeetingRemoteTranscriptionChunkStatus: Codable, Equatable, Sendable {
+    let chunkIndex: Int
+    let sourceType: String
+    let startMS: Int
+    let endMS: Int
+    let uploadStatus: String
+    let processStatus: String
+    let retryCount: Int
+    let resultSegmentCount: Int?
+    let errorMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case chunkIndex = "chunk_index"
+        case sourceType = "source_type"
+        case startMS = "start_ms"
+        case endMS = "end_ms"
+        case uploadStatus = "upload_status"
+        case processStatus = "process_status"
+        case retryCount = "retry_count"
+        case resultSegmentCount = "result_segment_count"
+        case errorMessage = "error_message"
     }
 }
 

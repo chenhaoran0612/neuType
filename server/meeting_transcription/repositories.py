@@ -32,6 +32,7 @@ from meeting_transcription.schemas import (
     CreateSessionResponse,
     FinalizeSessionRequest,
     FinalizeSessionResponse,
+    SessionChunkStatusResponse,
     SessionStatusResponse,
     TranscriptSegmentResponse,
     UploadChunkResponse,
@@ -320,12 +321,14 @@ def get_session_status(db: Session, public_session_id: str) -> SessionStatusResp
         chunk_overlap_ms=session.chunk_overlap_ms,
         expected_chunk_count=session.expected_chunk_count,
         uploaded_chunk_count=uploaded_chunk_count,
+        error_message=session.last_error if session.status == "failed" else None,
         full_text=(
             " ".join(segment.text for segment in transcript_segments if segment.text)
             if transcript_segments is not None
             else None
         ),
         segments=transcript_segments,
+        chunks=_session_chunk_statuses(session),
     )
 
 
@@ -364,8 +367,13 @@ def finalize_session(
 
     usable_fallback = _session_has_usable_full_audio(session)
     fallback_needed = bool(missing_chunk_indexes or failed_live_indexes)
+    preferred_fallback = (
+        payload.preferred_input_mode == FULL_AUDIO_FALLBACK_INPUT_MODE
+        and usable_fallback
+        and expected_count == 0
+    )
     switching_to_fallback = (
-        fallback_needed
+        (fallback_needed or preferred_fallback)
         and payload.allow_full_audio_fallback
         and usable_fallback
         and session.selected_final_input_mode != FULL_AUDIO_FALLBACK_INPUT_MODE
@@ -863,6 +871,29 @@ def _completed_transcript_segments(
     return rows
 
 
+def _session_chunk_statuses(
+    session: TranscriptionSession,
+) -> list[SessionChunkStatusResponse]:
+    chunks = sorted(
+        session.chunks,
+        key=lambda chunk: (chunk.chunk_index, chunk.source_type),
+    )
+    return [
+        SessionChunkStatusResponse(
+            chunk_index=chunk.chunk_index,
+            source_type=chunk.source_type,
+            start_ms=chunk.start_ms,
+            end_ms=chunk.end_ms,
+            upload_status=chunk.upload_status,
+            process_status=chunk.process_status,
+            retry_count=chunk.retry_count,
+            result_segment_count=chunk.result_segment_count,
+            error_message=chunk.error_message,
+        )
+        for chunk in chunks
+    ]
+
+
 def _write_anchor_artifact(
     storage: LocalArtifactStorage,
     *,
@@ -882,19 +913,26 @@ def _write_anchor_artifact(
     destination_path = storage.resolve(storage_path)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with wave.open(str(source_path), "rb") as source_wav:
-        frame_rate = source_wav.getframerate()
-        start_frame = max(0, int(anchor_start_ms - chunk.start_ms) * frame_rate // 1000)
-        end_frame = max(start_frame, int(anchor_end_ms - chunk.start_ms) * frame_rate // 1000)
-        frame_count = end_frame - start_frame
-        source_wav.setpos(start_frame)
-        frames = source_wav.readframes(frame_count)
+    try:
+        with wave.open(str(source_path), "rb") as source_wav:
+            frame_rate = source_wav.getframerate()
+            start_frame = max(
+                0, int(anchor_start_ms - chunk.start_ms) * frame_rate // 1000
+            )
+            end_frame = max(
+                start_frame, int(anchor_end_ms - chunk.start_ms) * frame_rate // 1000
+            )
+            frame_count = end_frame - start_frame
+            source_wav.setpos(start_frame)
+            frames = source_wav.readframes(frame_count)
 
-        with wave.open(str(destination_path), "wb") as destination_wav:
-            destination_wav.setnchannels(source_wav.getnchannels())
-            destination_wav.setsampwidth(source_wav.getsampwidth())
-            destination_wav.setframerate(frame_rate)
-            destination_wav.writeframes(frames)
+            with wave.open(str(destination_path), "wb") as destination_wav:
+                destination_wav.setnchannels(source_wav.getnchannels())
+                destination_wav.setsampwidth(source_wav.getsampwidth())
+                destination_wav.setframerate(frame_rate)
+                destination_wav.writeframes(frames)
+    except wave.Error:
+        return None
 
     return {
         "anchor_storage_path": storage_path,

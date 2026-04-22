@@ -352,6 +352,46 @@ def test_finalize_selected_input_mode_matches_persisted_session_state(client, cr
     assert status_response.json()["data"]["input_mode"] == "live_chunks"
 
 
+def test_finalize_prefers_full_audio_fallback_when_requested_with_zero_expected_chunks(
+    client, created_session
+):
+    payload = _wav_bytes(b"full-audio")
+    digest = _sha256(payload)
+
+    upload_response = client.put(
+        f"/api/meeting-transcription/sessions/{created_session}/full-audio",
+        files={"audio_file": ("recording.wav", BytesIO(payload), "audio/wav")},
+        data={
+            "sha256": digest,
+            "duration_ms": 1234,
+            "mime_type": "audio/wav",
+            "file_size_bytes": len(payload),
+        },
+    )
+    assert upload_response.status_code == 201
+
+    finalize_response = client.post(
+        f"/api/meeting-transcription/sessions/{created_session}/finalize",
+        json={
+            "expected_chunk_count": 0,
+            "preferred_input_mode": "full_audio_fallback",
+            "allow_full_audio_fallback": True,
+        },
+    )
+    status_response = client.get(
+        f"/api/meeting-transcription/sessions/{created_session}"
+    )
+
+    assert finalize_response.status_code == 200
+    assert status_response.status_code == 200
+    assert finalize_response.json()["data"]["status"] == "finalizing"
+    assert (
+        finalize_response.json()["data"]["selected_input_mode"]
+        == "full_audio_fallback"
+    )
+    assert status_response.json()["data"]["input_mode"] == "full_audio_fallback"
+
+
 def test_completed_status_includes_transcript_segments(tmp_path):
     database_path = tmp_path / "completed-status.db"
     engine = create_engine(f"sqlite+pysqlite:///{database_path}")
@@ -422,6 +462,136 @@ def test_completed_status_includes_transcript_segments(tmp_path):
             "start_ms": 1000,
             "end_ms": 2000,
             "text": "world",
+        },
+    ]
+
+
+def test_failed_status_includes_error_message(tmp_path):
+    database_path = tmp_path / "failed-status.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = LocalArtifactStorage(tmp_path / "artifacts")
+
+    db = session_factory()
+    try:
+        session = TranscriptionSession(
+            session_id="mts_failed",
+            client_session_token="failed-token",
+            status="failed",
+            input_mode="live_chunks",
+            selected_final_input_mode="live_chunks",
+            chunk_duration_ms=300000,
+            chunk_overlap_ms=2500,
+            expected_chunk_count=1,
+            last_error="GPU worker exhausted retries",
+        )
+        db.add(session)
+        db.commit()
+    finally:
+        db.close()
+
+    with TestClient(create_app(session_factory=session_factory, storage=storage)) as app:
+        response = app.get("/api/meeting-transcription/sessions/mts_failed")
+
+    engine.dispose()
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "failed"
+    assert data["error_message"] == "GPU worker exhausted retries"
+    assert data["full_text"] is None
+    assert data["segments"] is None
+
+
+def test_session_status_includes_chunk_results(tmp_path):
+    database_path = tmp_path / "chunk-status.db"
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = LocalArtifactStorage(tmp_path / "artifacts")
+
+    db = session_factory()
+    try:
+        session = TranscriptionSession(
+            session_id="mts_chunks",
+            client_session_token="chunk-token",
+            status="processing",
+            input_mode="full_audio_fallback",
+            selected_final_input_mode="full_audio_fallback",
+            chunk_duration_ms=300000,
+            chunk_overlap_ms=2500,
+            expected_chunk_count=0,
+        )
+        db.add(session)
+        db.flush()
+        db.add_all(
+            [
+                SessionChunk(
+                    session_id=session.id,
+                    chunk_index=0,
+                    source_type="server_split_from_full_audio",
+                    start_ms=0,
+                    end_ms=300000,
+                    duration_ms=300000,
+                    sha256="chunk-0",
+                    storage_path="sessions/mts_chunks/fallback/0.wav",
+                    upload_status="uploaded",
+                    process_status="completed",
+                    retry_count=1,
+                    result_segment_count=3,
+                    error_message=None,
+                ),
+                SessionChunk(
+                    session_id=session.id,
+                    chunk_index=1,
+                    source_type="server_split_from_full_audio",
+                    start_ms=300000,
+                    end_ms=600000,
+                    duration_ms=300000,
+                    sha256="chunk-1",
+                    storage_path="sessions/mts_chunks/fallback/1.wav",
+                    upload_status="uploaded",
+                    process_status="failed",
+                    retry_count=3,
+                    result_segment_count=None,
+                    error_message="The read operation timed out",
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    with TestClient(create_app(session_factory=session_factory, storage=storage)) as app:
+        response = app.get("/api/meeting-transcription/sessions/mts_chunks")
+
+    engine.dispose()
+
+    assert response.status_code == 200
+    chunks = response.json()["data"]["chunks"]
+    assert chunks == [
+        {
+            "chunk_index": 0,
+            "source_type": "server_split_from_full_audio",
+            "start_ms": 0,
+            "end_ms": 300000,
+            "upload_status": "uploaded",
+            "process_status": "completed",
+            "retry_count": 1,
+            "result_segment_count": 3,
+            "error_message": None,
+        },
+        {
+            "chunk_index": 1,
+            "source_type": "server_split_from_full_audio",
+            "start_ms": 300000,
+            "end_ms": 600000,
+            "upload_status": "uploaded",
+            "process_status": "failed",
+            "retry_count": 3,
+            "result_segment_count": None,
+            "error_message": "The read operation timed out",
         },
     ]
 

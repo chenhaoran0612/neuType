@@ -44,6 +44,23 @@ final class MeetingDetailViewSourceTests: XCTestCase {
         )
     }
 
+    func testTranscriptProcessingUsesLogIconSheetInsteadOfInlinePanel() throws {
+        let source = try meetingDetailViewSource()
+
+        XCTAssertTrue(
+            source.contains(".sheet(isPresented: $showingTranscriptLogs)"),
+            "Transcript pane should present request logs in a sheet."
+        )
+        XCTAssertTrue(
+            source.contains("Image(systemName: \"doc.text.magnifyingglass\")"),
+            "Transcript processing card should expose a log icon."
+        )
+        XCTAssertFalse(
+            source.contains("case .processing:\n                VStack(alignment: .leading, spacing: 16) {\n                    transcriptStatusPanel"),
+            "Transcript processing state should no longer reserve a second inline stack for logs."
+        )
+    }
+
     private func meetingDetailViewSource() throws -> String {
         let testsFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testsFileURL

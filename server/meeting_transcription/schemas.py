@@ -118,6 +118,20 @@ class TranscriptSegmentResponse(BaseModel):
     text: str
 
 
+class SessionChunkStatusResponse(BaseModel):
+    """Response payload for one server-side chunk processing record."""
+
+    chunk_index: int
+    source_type: str
+    start_ms: int
+    end_ms: int
+    upload_status: str
+    process_status: str
+    retry_count: int
+    result_segment_count: int | None = None
+    error_message: str | None = None
+
+
 class SessionStatusResponse(BaseModel):
     """Response payload for polling session state."""
 
@@ -128,5 +142,7 @@ class SessionStatusResponse(BaseModel):
     chunk_overlap_ms: int
     expected_chunk_count: int | None
     uploaded_chunk_count: int
+    error_message: str | None = None
     full_text: str | None = None
     segments: list[TranscriptSegmentResponse] | None = None
+    chunks: list[SessionChunkStatusResponse] = Field(default_factory=list)

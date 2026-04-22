@@ -23,9 +23,11 @@ struct OptionalUserDefault<T> {
 
 final class AppPreferences: @unchecked Sendable {
     static let shared = AppPreferences()
-    private init() {}
+    private init() {
+        sanitizeMeetingSummaryBaseURL()
+    }
     
-    @UserDefault(key: "whisperLanguage", defaultValue: "en")
+    @UserDefault(key: "whisperLanguage", defaultValue: "auto")
     var whisperLanguage: String
     
     // Transcription settings
@@ -59,7 +61,7 @@ final class AppPreferences: @unchecked Sendable {
     @UserDefault(key: "playSoundOnRecordStart", defaultValue: false)
     var playSoundOnRecordStart: Bool
     
-    @UserDefault(key: "hasCompletedOnboarding", defaultValue: false)
+    @UserDefault(key: "hasCompletedOnboarding", defaultValue: true)
     var hasCompletedOnboarding: Bool
     
     @UserDefault(key: "useAsianAutocorrect", defaultValue: true)
@@ -166,6 +168,13 @@ final class AppPreferences: @unchecked Sendable {
     var groqLLMModel: String {
         get { llmModel }
         set { llmModel = newValue }
+    }
+
+    func sanitizeMeetingSummaryBaseURL() {
+        let canonical = MeetingSummaryConfig.defaultBaseURL
+        if meetingSummaryBaseURL != canonical {
+            meetingSummaryBaseURL = canonical
+        }
     }
 }
 

@@ -1,19 +1,10 @@
 import AppKit
 import SwiftUI
-import KeyboardShortcuts
 
 struct MeetingRootView: View {
     @EnvironmentObject private var meetingSession: MeetingSessionController
     @StateObject private var listViewModel = MeetingListViewModel()
     @State private var selectedMeetingID: UUID?
-
-    private var meetingShortcutDescription: String {
-        if let shortcut = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord) {
-            return shortcut.description
-        }
-
-        return "the configured meeting shortcut"
-    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -124,21 +115,25 @@ struct MeetingRootView: View {
                 MeetingDetailView(meeting: meeting, layout: layout)
                     .id(meeting.id)
             } else {
-                VStack(spacing: 22) {
-                    MeetingRecorderView(viewModel: meetingSession.recorderViewModel)
-                        .frame(maxWidth: 420, minHeight: 220)
-                        .background(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color.black.opacity(0.06), lineWidth: 1)
-                        }
-                        .shadow(color: Color.black.opacity(0.04), radius: 18, y: 10)
+                VStack(spacing: 24) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.2.wave.2")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.secondary)
 
-                    Text("也可以使用 `\(meetingShortcutDescription)` 直接开始会议录制。")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        Text("暂无会议记录")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(.primary)
+
+                        Text("开始会议录制或导入音频后，这里会显示文字记录、播放控件和总结结果。")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: 520)
                 }
+                .padding(.horizontal, 32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

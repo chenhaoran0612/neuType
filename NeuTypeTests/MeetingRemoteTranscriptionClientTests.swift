@@ -106,7 +106,7 @@ final class MeetingRemoteTranscriptionClientTests: XCTestCase {
                 XCTAssertEqual(request.httpMethod, "PUT")
                 XCTAssertTrue((request.value(forHTTPHeaderField: "Content-Type") ?? "").hasPrefix("multipart/form-data; boundary="))
 
-                let body = try XCTUnwrap(request.httpBody)
+                let body = try XCTUnwrap(request.httpBody ?? URLProtocolStub.readStream(from: request.httpBodyStream))
                 let bodyString = String(decoding: body, as: UTF8.self)
                 XCTAssertTrue(bodyString.contains("name=\"audio_file\"; filename=\"chunk.wav\""))
                 XCTAssertTrue(bodyString.contains("name=\"start_ms\""))
@@ -224,7 +224,7 @@ final class MeetingRemoteTranscriptionClientTests: XCTestCase {
                 XCTAssertEqual(request.httpMethod, "PUT")
                 XCTAssertTrue((request.value(forHTTPHeaderField: "Content-Type") ?? "").hasPrefix("multipart/form-data; boundary="))
 
-                let body = try XCTUnwrap(request.httpBody)
+                let body = try XCTUnwrap(request.httpBody ?? URLProtocolStub.readStream(from: request.httpBodyStream))
                 let bodyString = String(decoding: body, as: UTF8.self)
                 XCTAssertTrue(bodyString.contains("name=\"audio_file\"; filename=\"meeting.wav\""))
                 XCTAssertTrue(bodyString.contains("name=\"sha256\""))
@@ -292,6 +292,82 @@ final class MeetingRemoteTranscriptionClientTests: XCTestCase {
         XCTAssertEqual(status.transcriptResult?.segments[0].speakerLabel, "Speaker 1")
         XCTAssertEqual(status.transcriptResult?.segments[0].startMS, 0)
         XCTAssertEqual(status.transcriptResult?.segments[1].text, "world")
+    }
+
+    func testGetSessionStatusDecodesChunkResults() async throws {
+        let session = makeStubSession()
+        let config = StubMeetingVibeVoiceConfigProvider(
+            config: MeetingVibeVoiceConfig(
+                baseURL: "https://meeting.example.com",
+                apiPrefix: "",
+                apiKey: "remote_key",
+                contextInfo: "",
+                maxNewTokens: 4096,
+                temperature: 0,
+                topP: 1,
+                doSample: false,
+                repetitionPenalty: 1
+            )
+        )
+
+        URLProtocolStub.requestHandlers = [
+            { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://meeting.example.com/api/meeting-transcription/sessions/mts_chunks")
+                return (
+                    URLProtocolStub.makeHTTPURLResponse(for: request, statusCode: 200),
+                    #"""
+                    {"request_id":"req_chunks","data":{"session_id":"mts_chunks","status":"processing","input_mode":"full_audio_fallback","chunk_duration_ms":300000,"chunk_overlap_ms":2500,"expected_chunk_count":0,"uploaded_chunk_count":0,"chunks":[{"chunk_index":0,"source_type":"server_split_from_full_audio","start_ms":0,"end_ms":300000,"upload_status":"uploaded","process_status":"completed","retry_count":1,"result_segment_count":3,"error_message":null},{"chunk_index":1,"source_type":"server_split_from_full_audio","start_ms":300000,"end_ms":600000,"upload_status":"uploaded","process_status":"failed","retry_count":3,"result_segment_count":null,"error_message":"The read operation timed out"}]},"error":null}
+                    """#.data(using: .utf8)!
+                )
+            },
+        ]
+
+        let client = MeetingRemoteTranscriptionClient(session: session, configProvider: config)
+        let status = try await client.getSessionStatus(sessionID: "mts_chunks")
+
+        XCTAssertEqual(status.chunks.count, 2)
+        XCTAssertEqual(status.chunks[0].chunkIndex, 0)
+        XCTAssertEqual(status.chunks[0].processStatus, "completed")
+        XCTAssertEqual(status.chunks[0].resultSegmentCount, 3)
+        XCTAssertEqual(status.chunks[1].chunkIndex, 1)
+        XCTAssertEqual(status.chunks[1].processStatus, "failed")
+        XCTAssertEqual(status.chunks[1].errorMessage, "The read operation timed out")
+    }
+
+    func testGetSessionStatusDecodesFailedErrorMessage() async throws {
+        let session = makeStubSession()
+        let config = StubMeetingVibeVoiceConfigProvider(
+            config: MeetingVibeVoiceConfig(
+                baseURL: "https://meeting.example.com",
+                apiPrefix: "",
+                apiKey: "remote_key",
+                contextInfo: "",
+                maxNewTokens: 4096,
+                temperature: 0,
+                topP: 1,
+                doSample: false,
+                repetitionPenalty: 1
+            )
+        )
+
+        URLProtocolStub.requestHandlers = [
+            { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://meeting.example.com/api/meeting-transcription/sessions/mts_failed")
+                return (
+                    URLProtocolStub.makeHTTPURLResponse(for: request, statusCode: 200),
+                    #"""
+                    {"request_id":"req_failed","data":{"session_id":"mts_failed","status":"failed","input_mode":"live_chunks","error_message":"GPU worker exhausted retries"},"error":null}
+                    """#.data(using: .utf8)!
+                )
+            },
+        ]
+
+        let client = MeetingRemoteTranscriptionClient(session: session, configProvider: config)
+        let status = try await client.getSessionStatus(sessionID: "mts_failed")
+
+        XCTAssertEqual(status.status, "failed")
+        XCTAssertEqual(status.errorMessage, "GPU worker exhausted retries")
+        XCTAssertNil(status.transcriptResult)
     }
 
     func testCreateSessionSurfacesStructuredAPIError() async throws {
@@ -394,6 +470,29 @@ private final class URLProtocolStub: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    static func readStream(from stream: InputStream?) -> Data? {
+        guard let stream else { return nil }
+        stream.open()
+        defer { stream.close() }
+
+        let bufferSize = 16 * 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+
+        var data = Data()
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read < 0 {
+                return nil
+            }
+            if read == 0 {
+                break
+            }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
 }
 
 private extension CreateMeetingTranscriptionSessionRequest {
