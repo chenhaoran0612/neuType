@@ -2,6 +2,21 @@ import XCTest
 @testable import NeuType
 
 final class MeetingVibeVoiceConfigTests: XCTestCase {
+    func testDefaultMeetingTranscriptionBaseURLUsesDeployedService() {
+        let preferences = AppPreferences.shared
+        let previousBaseURL = preferences.meetingVibeVoiceBaseURL
+        defer {
+            preferences.meetingVibeVoiceBaseURL = previousBaseURL
+        }
+
+        UserDefaults.standard.removeObject(forKey: "meetingVibeVoiceBaseURL")
+
+        XCTAssertEqual(
+            preferences.meetingVibeVoiceBaseURL,
+            "https://meeting-transcription.neuxnet.com"
+        )
+    }
+
     func testResolvedCallURLUsesBaseURLAndAPIPrefix() {
         let config = MeetingVibeVoiceConfig(
             baseURL: "http://workspace.featurize.cn:12930",

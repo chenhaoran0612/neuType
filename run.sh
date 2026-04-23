@@ -17,8 +17,10 @@ APP_SUPPORT_DIR="${HOME}/Library/Application Support/${APP_BUNDLE_ID}"
 APP_CACHE_DIR="${HOME}/Library/Caches/${APP_BUNDLE_ID}"
 APP_SAVED_STATE_DIR="${HOME}/Library/Saved Application State/${APP_BUNDLE_ID}.savedState"
 BUILD_DESTINATION="platform=macOS,name=My Mac"
-LOCAL_MEETING_SUMMARY_BASE_URL="${LOCAL_MEETING_SUMMARY_BASE_URL:-http://127.0.0.1:8000}"
-LOCAL_MEETING_SUMMARY_API_KEY="${LOCAL_MEETING_SUMMARY_API_KEY:-ntm_local}"
+MEETING_TRANSCRIPTION_BASE_URL="${MEETING_TRANSCRIPTION_BASE_URL:-${LOCAL_MEETING_SUMMARY_BASE_URL:-https://meeting-transcription.neuxnet.com}}"
+MEETING_TRANSCRIPTION_API_KEY="${MEETING_TRANSCRIPTION_API_KEY:-${LOCAL_MEETING_SUMMARY_API_KEY:-}}"
+MEETING_SUMMARY_BASE_URL="${MEETING_SUMMARY_BASE_URL:-https://ai-worker.neuxnet.com}"
+MEETING_SUMMARY_API_KEY="${MEETING_SUMMARY_API_KEY:-${MEETING_TRANSCRIPTION_API_KEY}}"
 EXPECTED_TEAM_ID="4URL8287A7"
 EXPECTED_APP_IDENTIFIER="${APP_BUNDLE_ID}"
 APP_NAME="NeuType-Test.app"
@@ -150,11 +152,11 @@ reset_app_state() {
 }
 
 seed_local_preferences() {
-    defaults write "${APP_BUNDLE_ID}" meetingVibeVoiceBaseURL -string "${LOCAL_MEETING_SUMMARY_BASE_URL}"
+    defaults write "${APP_BUNDLE_ID}" meetingVibeVoiceBaseURL -string "${MEETING_TRANSCRIPTION_BASE_URL}"
     defaults write "${APP_BUNDLE_ID}" meetingVibeVoiceAPIPrefix -string ""
-    defaults write "${APP_BUNDLE_ID}" meetingVibeVoiceAPIKey -string "${LOCAL_MEETING_SUMMARY_API_KEY}"
-    defaults write "${APP_BUNDLE_ID}" meetingSummaryBaseURL -string "${LOCAL_MEETING_SUMMARY_BASE_URL}"
-    defaults write "${APP_BUNDLE_ID}" meetingSummaryAPIKey -string "${LOCAL_MEETING_SUMMARY_API_KEY}"
+    defaults write "${APP_BUNDLE_ID}" meetingVibeVoiceAPIKey -string "${MEETING_TRANSCRIPTION_API_KEY}"
+    defaults write "${APP_BUNDLE_ID}" meetingSummaryBaseURL -string "${MEETING_SUMMARY_BASE_URL}"
+    defaults write "${APP_BUNDLE_ID}" meetingSummaryAPIKey -string "${MEETING_SUMMARY_API_KEY}"
     defaults write "${APP_BUNDLE_ID}" whisperLanguage -string "auto"
     defaults write "${APP_BUNDLE_ID}" useAsianAutocorrect -bool true
     defaults write "${APP_BUNDLE_ID}" hasCompletedOnboarding -bool true

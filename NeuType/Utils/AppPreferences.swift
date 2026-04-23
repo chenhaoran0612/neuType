@@ -103,7 +103,7 @@ final class AppPreferences: @unchecked Sendable {
     @UserDefault(key: "llmModel", defaultValue: "openai/gpt-oss-20b")
     var llmModel: String
 
-    @UserDefault(key: "meetingVibeVoiceBaseURL", defaultValue: "https://tokenhubpro.com")
+    @UserDefault(key: "meetingVibeVoiceBaseURL", defaultValue: "https://meeting-transcription.neuxnet.com")
     var meetingVibeVoiceBaseURL: String
 
     @UserDefault(key: "meetingVibeVoiceAPIPrefix", defaultValue: "")
