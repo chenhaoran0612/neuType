@@ -27,9 +27,6 @@ _PLACEHOLDER_PHRASES = {
     "non-speech",
 }
 
-_JSON_SEGMENTS_RE = re.compile(r"(\[[\s\S]*\])\s*$")
-
-
 @dataclass(slots=True)
 class GradioChunkTranscriber(ChunkTranscriber):
     base_url: str
@@ -117,15 +114,53 @@ class GradioChunkTranscriber(ChunkTranscriber):
         }
 
     def _extract_json_segments(self, raw_output: str) -> list[dict[str, object]]:
-        match = _JSON_SEGMENTS_RE.search(raw_output)
-        if match is None:
-            raise ValueError("gradio raw output did not contain a JSON segment array")
-        parsed = json.loads(match.group(1))
-        if not isinstance(parsed, list):
-            raise ValueError("gradio JSON segment payload was not a list")
-        if not all(isinstance(item, dict) for item in parsed):
-            raise ValueError("gradio JSON segment list must contain objects")
-        return parsed
+        for candidate in self._json_candidates(raw_output):
+            segments = self._coerce_segments_candidate(candidate)
+            if segments is not None:
+                return segments
+
+        preview = re.sub(r"\s+", " ", raw_output).strip()[:240]
+        raise ValueError(
+            "gradio raw output did not contain a JSON segment array"
+            + (f"; preview={preview}" if preview else "")
+        )
+
+    def _json_candidates(self, raw_output: str) -> list[object]:
+        decoder = json.JSONDecoder()
+        candidates: list[object] = []
+        seen: set[tuple[int, int]] = set()
+
+        for index, char in enumerate(raw_output):
+            if char not in "[{":
+                continue
+            try:
+                parsed, end = decoder.raw_decode(raw_output[index:])
+            except json.JSONDecodeError:
+                continue
+            key = (index, end)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(parsed)
+
+        return candidates
+
+    def _coerce_segments_candidate(
+        self, candidate: object
+    ) -> list[dict[str, object]] | None:
+        if isinstance(candidate, list):
+            if not all(isinstance(item, dict) for item in candidate):
+                raise ValueError("gradio JSON segment list must contain objects")
+            return candidate
+
+        if isinstance(candidate, dict):
+            segments = candidate.get("segments")
+            if isinstance(segments, list):
+                if not all(isinstance(item, dict) for item in segments):
+                    raise ValueError("gradio JSON segment list must contain objects")
+                return segments
+
+        return None
 
     def _speaker_label(self, value: object) -> str | None:
         if value is None:

@@ -132,6 +132,78 @@ def test_gradio_transcriber_drops_placeholder_only_segments(tmp_path):
     }
 
 
+def test_gradio_transcriber_accepts_fenced_json_segment_array(tmp_path):
+    client = RecordingClient(
+        (
+            "--- ✅ Transcription Complete ---\n"
+            "```json\n"
+            '[{"Start":0.5,"End":2.5,"Speaker":1,"Content":"fenced hello"}]\n'
+            "```",
+            "",
+            "",
+            None,
+        )
+    )
+    transcriber = GradioChunkTranscriber(
+        base_url="https://546463aae3e7327f37.gradio.live/",
+        client=client,
+    )
+
+    audio_path = tmp_path / "chunk.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = transcriber.transcribe_chunk(
+        session=DummySession(),
+        chunk=DummyChunk(),
+        audio_path=str(audio_path),
+        prefix_plan=None,
+    )
+
+    assert result["segments"] == [
+        {
+            "text": "fenced hello",
+            "start_ms": 500,
+            "end_ms": 2500,
+            "speaker_label": "Speaker 2",
+        }
+    ]
+
+
+def test_gradio_transcriber_accepts_object_wrapped_segments(tmp_path):
+    client = RecordingClient(
+        (
+            "--- ✅ Transcription Complete ---\n"
+            '{"segments":[{"Start":1.0,"End":3.0,"Speaker":0,"Content":"wrapped hello"}]}',
+            "",
+            "",
+            None,
+        )
+    )
+    transcriber = GradioChunkTranscriber(
+        base_url="https://546463aae3e7327f37.gradio.live/",
+        client=client,
+    )
+
+    audio_path = tmp_path / "chunk.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = transcriber.transcribe_chunk(
+        session=DummySession(),
+        chunk=DummyChunk(),
+        audio_path=str(audio_path),
+        prefix_plan=None,
+    )
+
+    assert result["segments"] == [
+        {
+            "text": "wrapped hello",
+            "start_ms": 1000,
+            "end_ms": 3000,
+            "speaker_label": "Speaker 1",
+        }
+    ]
+
+
 def test_gradio_transcriber_rejects_unparseable_raw_output(tmp_path):
     client = RecordingClient(("model returned plain text only", "", "", None))
     transcriber = GradioChunkTranscriber(
