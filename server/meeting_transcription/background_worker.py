@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from meeting_transcription.storage import LocalArtifactStorage
 from meeting_transcription.transcriber import ChunkTranscriber
+from meeting_transcription.translation import SegmentTranslator
 from meeting_transcription.worker import run_pending_chunk_once
 
 logger = logging.getLogger(__name__)
@@ -21,11 +22,13 @@ class BackgroundWorkerService:
         session_factory: sessionmaker[Session],
         storage: LocalArtifactStorage,
         transcriber: ChunkTranscriber,
+        translator: SegmentTranslator | None = None,
         idle_sleep_seconds: float = 1.0,
     ) -> None:
         self._session_factory = session_factory
         self._storage = storage
         self._transcriber = transcriber
+        self._translator = translator
         self._idle_sleep_seconds = idle_sleep_seconds
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
@@ -52,6 +55,7 @@ class BackgroundWorkerService:
                         db,
                         self._transcriber,
                         storage=self._storage,
+                        translator=self._translator,
                     )
             except Exception:
                 logger.exception("meeting transcription background worker loop failed")

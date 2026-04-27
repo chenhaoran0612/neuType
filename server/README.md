@@ -52,6 +52,17 @@ export MEETING_TRANSCRIPTION_GRADIO_CONTEXT_INFO=""
 export MEETING_TRANSCRIPTION_WORKER_IDLE_SLEEP_SECONDS=1.0
 ```
 
+### Segment translation backend
+
+When configured, the worker translates each normalized transcript segment into English, Chinese, and Arabic immediately after ASR. Translation uses an OpenAI-compatible chat completions endpoint. If any translation variable is missing, transcription still completes and translations are returned as empty strings.
+
+```bash
+export MEETING_TRANSCRIPTION_TRANSLATION_BASE_URL="https://api.openai.com/v1"
+export MEETING_TRANSCRIPTION_TRANSLATION_API_KEY=""
+export MEETING_TRANSCRIPTION_TRANSLATION_MODEL=""
+export MEETING_TRANSCRIPTION_TRANSLATION_TIMEOUT_SECONDS=60
+```
+
 ## Database migrations
 
 Run Alembic migrations before starting a persistent server database:

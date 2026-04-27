@@ -17,6 +17,7 @@ from meeting_transcription.models import Base
 from meeting_transcription.routes import router as sessions_router
 from meeting_transcription.runtime import (
     create_chunk_transcriber_from_settings,
+    create_segment_translator_from_settings,
     load_worker_runtime_settings,
 )
 from meeting_transcription.schemas import APIError, envelope
@@ -63,6 +64,7 @@ def create_app(
             session_factory=session_factory,
             storage=storage,
             transcriber=create_chunk_transcriber_from_settings(worker_settings),
+            translator=create_segment_translator_from_settings(worker_settings),
             idle_sleep_seconds=worker_settings.idle_sleep_seconds,
         )
         app.state.background_worker = worker_service

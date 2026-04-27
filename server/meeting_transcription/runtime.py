@@ -7,6 +7,11 @@ import os
 
 from meeting_transcription.gradio_transcriber import GradioChunkTranscriber
 from meeting_transcription.transcriber import ChunkTranscriber
+from meeting_transcription.translation import (
+    NoopSegmentTranslator,
+    OpenAICompatibleSegmentTranslator,
+    SegmentTranslator,
+)
 
 DEFAULT_GRADIO_BASE_URL = "https://546463aae3e7327f37.gradio.live/"
 
@@ -20,6 +25,10 @@ class WorkerRuntimeSettings:
     do_sample: bool
     context_info: str
     idle_sleep_seconds: float
+    translation_base_url: str
+    translation_api_key: str
+    translation_model: str
+    translation_timeout_seconds: float
 
 
 def load_worker_runtime_settings() -> WorkerRuntimeSettings:
@@ -36,6 +45,18 @@ def load_worker_runtime_settings() -> WorkerRuntimeSettings:
         idle_sleep_seconds=_env_float(
             "MEETING_TRANSCRIPTION_WORKER_IDLE_SLEEP_SECONDS", default=1.0
         ),
+        translation_base_url=_env_str(
+            "MEETING_TRANSCRIPTION_TRANSLATION_BASE_URL", default=""
+        ),
+        translation_api_key=_env_str(
+            "MEETING_TRANSCRIPTION_TRANSLATION_API_KEY", default=""
+        ),
+        translation_model=_env_str(
+            "MEETING_TRANSCRIPTION_TRANSLATION_MODEL", default=""
+        ),
+        translation_timeout_seconds=_env_float(
+            "MEETING_TRANSCRIPTION_TRANSLATION_TIMEOUT_SECONDS", default=60.0
+        ),
     )
 
 
@@ -51,6 +72,24 @@ def create_chunk_transcriber_from_settings(
         top_p=settings.top_p,
         do_sample=settings.do_sample,
         context_info=settings.context_info,
+    )
+
+
+def create_segment_translator_from_settings(
+    settings: WorkerRuntimeSettings,
+) -> SegmentTranslator:
+    if (
+        not settings.translation_base_url
+        or not settings.translation_api_key
+        or not settings.translation_model
+    ):
+        return NoopSegmentTranslator()
+
+    return OpenAICompatibleSegmentTranslator(
+        base_url=settings.translation_base_url,
+        api_key=settings.translation_api_key,
+        model=settings.translation_model,
+        timeout_seconds=settings.translation_timeout_seconds,
     )
 
 
