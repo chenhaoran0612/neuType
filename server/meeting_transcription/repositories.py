@@ -32,6 +32,7 @@ from meeting_transcription.schemas import (
     CreateSessionResponse,
     FinalizeSessionRequest,
     FinalizeSessionResponse,
+    SegmentTranslationsResponse,
     SessionChunkStatusResponse,
     SessionStatusResponse,
     TranscriptSegmentResponse,
@@ -866,6 +867,11 @@ def _completed_transcript_segments(
                     start_ms=segment.start_ms,
                     end_ms=segment.end_ms,
                     text=segment.text,
+                    translations=(
+                        SegmentTranslationsResponse(**segment.translations)
+                        if segment.translations
+                        else None
+                    ),
                 )
             )
     return rows

@@ -116,6 +116,15 @@ class TranscriptSegmentResponse(BaseModel):
     start_ms: int
     end_ms: int
     text: str
+    translations: "SegmentTranslationsResponse | None" = None
+
+
+class SegmentTranslationsResponse(BaseModel):
+    """Response payload for one segment's translated text variants."""
+
+    en: str | None = None
+    zh: str | None = None
+    ar: str | None = None
 
 
 class SessionChunkStatusResponse(BaseModel):

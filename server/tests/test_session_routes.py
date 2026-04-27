@@ -429,7 +429,8 @@ def test_completed_status_includes_transcript_segments(tmp_path):
                 result_segment_count=2,
                 normalized_segments_json=(
                     "["
-                    '{"text":"hello","start_ms":0,"end_ms":1000,"speaker_label":"Speaker 1","speaker_key":"speaker_1"},'
+                    '{"text":"hello","start_ms":0,"end_ms":1000,"speaker_label":"Speaker 1","speaker_key":"speaker_1",'
+                    '"translations":{"en":"Hello","zh":"你好","ar":"مرحبا"}},'
                     '{"text":"world","start_ms":1000,"end_ms":2000,"speaker_label":"Speaker 2","speaker_key":"speaker_2"}'
                     "]"
                 ),
@@ -455,6 +456,7 @@ def test_completed_status_includes_transcript_segments(tmp_path):
             "start_ms": 0,
             "end_ms": 1000,
             "text": "hello",
+            "translations": {"en": "Hello", "zh": "你好", "ar": "مرحبا"},
         },
         {
             "sequence": 1,
@@ -462,6 +464,7 @@ def test_completed_status_includes_transcript_segments(tmp_path):
             "start_ms": 1000,
             "end_ms": 2000,
             "text": "world",
+            "translations": None,
         },
     ]
 

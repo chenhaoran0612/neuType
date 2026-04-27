@@ -5,6 +5,8 @@ from meeting_transcription.anchor_audio import (
     build_speaker_label_map,
     remap_real_chunk_segments,
     select_anchor_candidate,
+    segments_from_payload,
+    segments_to_payload,
     strip_prefix_segments,
 )
 
@@ -183,3 +185,21 @@ def test_manifest_from_dict_rejects_negative_offset_and_invalid_regions():
         except ValueError:
             continue
         raise AssertionError(f"expected ValueError for {payload}")
+
+
+def test_segment_payload_round_trip_preserves_translations():
+    payload = [
+        {
+            "text": "hello",
+            "start_ms": 0,
+            "end_ms": 1000,
+            "speaker_label": "Speaker 1",
+            "speaker_key": "speaker_1",
+            "translations": {"en": "Hello", "zh": "你好", "ar": "مرحبا"},
+        }
+    ]
+
+    segments = segments_from_payload(payload)
+
+    assert segments[0].translations == {"en": "Hello", "zh": "你好", "ar": "مرحبا"}
+    assert segments_to_payload(segments) == payload

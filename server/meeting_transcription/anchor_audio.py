@@ -21,6 +21,7 @@ class Segment:
     end_ms: int
     speaker_label: str | None = None
     speaker_key: str | None = None
+    translations: dict[str, str] | None = None
 
     @property
     def duration_ms(self) -> int:
@@ -254,33 +255,53 @@ def manifest_from_dict(payload: dict[str, object]) -> PrefixManifest:
 def segments_from_payload(payload: list[dict[str, object]]) -> list[Segment]:
     if not isinstance(payload, list):
         raise ValueError("segments payload must be a list")
-    return [
-        Segment(
-            text=str(item.get("text", "")),
-            start_ms=int(item["start_ms"]),
-            end_ms=int(item["end_ms"]),
-            speaker_label=(
-                str(item["speaker_label"]) if item.get("speaker_label") is not None else None
-            ),
-            speaker_key=(
-                str(item["speaker_key"]) if item.get("speaker_key") is not None else None
-            ),
+    segments: list[Segment] = []
+    for item in payload:
+        raw_translations = item.get("translations")
+        translations = (
+            {
+                key: str(value)
+                for key, value in raw_translations.items()
+                if key in {"en", "zh", "ar"} and value is not None
+            }
+            if isinstance(raw_translations, dict)
+            else None
         )
-        for item in payload
-    ]
+        segments.append(
+            Segment(
+                text=str(item.get("text", "")),
+                start_ms=int(item["start_ms"]),
+                end_ms=int(item["end_ms"]),
+                speaker_label=(
+                    str(item["speaker_label"]) if item.get("speaker_label") is not None else None
+                ),
+                speaker_key=(
+                    str(item["speaker_key"]) if item.get("speaker_key") is not None else None
+                ),
+                translations=translations,
+            )
+        )
+    return segments
 
 
 def segments_to_payload(segments: list[Segment]) -> list[dict[str, object]]:
-    return [
-        {
+    payload: list[dict[str, object]] = []
+    for segment in segments:
+        item: dict[str, object] = {
             "text": segment.text,
             "start_ms": segment.start_ms,
             "end_ms": segment.end_ms,
             "speaker_label": segment.speaker_label,
             "speaker_key": segment.speaker_key,
         }
-        for segment in segments
-    ]
+        if segment.translations:
+            item["translations"] = {
+                key: value
+                for key, value in segment.translations.items()
+                if key in {"en", "zh", "ar"} and value
+            }
+        payload.append(item)
+    return payload
 
 
 def stable_speaker_key(speaker_label: str | None) -> str | None:
