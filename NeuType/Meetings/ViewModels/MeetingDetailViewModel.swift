@@ -32,12 +32,23 @@ enum MeetingSummaryState: Equatable {
     case failed(message: String)
 }
 
+struct MeetingTranscriptRow: Identifiable, Equatable, Sendable {
+    let segment: MeetingTranscriptSegment
+    let text: String
+
+    var id: UUID { segment.id }
+    var sequence: Int { segment.sequence }
+    var speakerLabel: String { segment.speakerLabel }
+    var startTime: TimeInterval { segment.startTime }
+}
+
 @MainActor
 final class MeetingDetailViewModel: ObservableObject {
     @Published private(set) var meeting: MeetingRecord?
     @Published private(set) var segments: [MeetingTranscriptSegment] = []
     @Published var activeTab: MeetingDetailTab = .transcript
     @Published var searchText = ""
+    @Published var selectedTranscriptLanguage: MeetingTranscriptLanguage = .original
     @Published private(set) var isTranscriptOperationInFlight = false
 
     let playbackCoordinator: MeetingPlaybackCoordinator
@@ -229,6 +240,27 @@ final class MeetingDetailViewModel: ObservableObject {
         return segments.filter { segment in
             segment.speakerLabel.localizedCaseInsensitiveContains(trimmedQuery)
                 || segment.text.localizedCaseInsensitiveContains(trimmedQuery)
+        }
+    }
+
+    var transcriptRows: [MeetingTranscriptRow] {
+        segments.map { segment in
+            MeetingTranscriptRow(
+                segment: segment,
+                text: segment.displayText(for: selectedTranscriptLanguage)
+            )
+        }
+    }
+
+    var filteredTranscriptRows: [MeetingTranscriptRow] {
+        let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            return transcriptRows
+        }
+
+        return transcriptRows.filter { row in
+            row.speakerLabel.localizedCaseInsensitiveContains(trimmedQuery)
+                || row.text.localizedCaseInsensitiveContains(trimmedQuery)
         }
     }
 

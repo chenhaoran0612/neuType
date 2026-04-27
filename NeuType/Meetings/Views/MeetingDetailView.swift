@@ -565,36 +565,45 @@ private struct MeetingTranscriptPane: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+
+                    Picker("文字语言", selection: $viewModel.selectedTranscriptLanguage) {
+                        ForEach(MeetingTranscriptLanguage.allCases) { language in
+                            Text(language.title).tag(language)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(width: 220)
                 }
 
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
-                            ForEach(viewModel.filteredSegments) { segment in
+                            ForEach(viewModel.filteredTranscriptRows) { row in
                                 Button {
-                                    viewModel.playSegment(segment)
+                                    viewModel.playSegment(row.segment)
                                 } label: {
                                     HStack(alignment: .top, spacing: 14) {
                                         Circle()
                                             .fill(Color.accentColor.opacity(0.14))
                                             .frame(width: 26, height: 26)
                                             .overlay(
-                                                Text(speakerBadge(for: segment.speakerLabel))
+                                                Text(speakerBadge(for: row.speakerLabel))
                                                     .font(.system(size: 13, weight: .bold))
                                                     .foregroundStyle(Color.accentColor)
                                             )
 
                                         VStack(alignment: .leading, spacing: 8) {
                                             HStack(spacing: 10) {
-                                                Text(segment.speakerLabel)
+                                                Text(row.speakerLabel)
                                                     .font(.system(size: 12, weight: .medium))
                                                     .foregroundStyle(.secondary)
-                                                Text(formatTimestamp(segment.startTime))
+                                                Text(formatTimestamp(row.startTime))
                                                     .font(.system(size: 12, weight: .medium))
                                                     .foregroundStyle(.secondary)
                                             }
 
-                                            Text(segment.text)
+                                            Text(row.text)
                                                 .font(.system(size: 13, weight: .regular))
                                                 .foregroundStyle(.primary)
                                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -605,16 +614,16 @@ private struct MeetingTranscriptPane: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(
                                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                            .fill(playbackCoordinator.activeSegmentSequence == segment.sequence ? Color.accentColor.opacity(0.18) : Color.clear)
+                                            .fill(playbackCoordinator.activeSegmentSequence == row.sequence ? Color.accentColor.opacity(0.18) : Color.clear)
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                            .stroke(playbackCoordinator.activeSegmentSequence == segment.sequence ? Color.accentColor.opacity(0.36) : Color.clear, lineWidth: 1.5)
+                                            .stroke(playbackCoordinator.activeSegmentSequence == row.sequence ? Color.accentColor.opacity(0.36) : Color.clear, lineWidth: 1.5)
                                     )
                                     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
-                                .id(segment.sequence)
+                                .id(row.sequence)
                             }
                         }
                         .padding(.top, 4)
@@ -748,11 +757,15 @@ private struct MeetingTranscriptPane: View {
         let transcript = MeetingExportFormatter.transcriptText(
             meetingTitle: meeting.title,
             meetingDate: meeting.createdAt,
-            segments: viewModel.segments
+            segments: viewModel.segments,
+            textProvider: { $0.displayText(for: viewModel.selectedTranscriptLanguage) }
         )
         guard !transcript.isEmpty else { return }
 
-        let suggestedName = meeting.title + ".txt"
+        let suggestedName = MeetingExportFormatter.transcriptFileName(
+            meetingTitle: meeting.title,
+            language: viewModel.selectedTranscriptLanguage
+        )
         let panel = NSSavePanel()
         panel.nameFieldStringValue = suggestedName
         panel.canCreateDirectories = true

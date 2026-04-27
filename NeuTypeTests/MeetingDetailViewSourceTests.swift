@@ -61,6 +61,27 @@ final class MeetingDetailViewSourceTests: XCTestCase {
         )
     }
 
+    func testTranscriptPaneIncludesLanguagePickerAndSelectedLanguageExport() throws {
+        let source = try meetingDetailViewSource()
+
+        XCTAssertTrue(
+            source.contains("Picker(\"文字语言\", selection: $viewModel.selectedTranscriptLanguage)"),
+            "Transcript pane should expose the original/translated transcript language picker."
+        )
+        XCTAssertTrue(
+            source.contains("MeetingTranscriptLanguage.allCases"),
+            "Transcript pane should render every supported transcript language option."
+        )
+        XCTAssertTrue(
+            source.contains("viewModel.filteredTranscriptRows"),
+            "Transcript pane should render language-projected transcript rows."
+        )
+        XCTAssertTrue(
+            source.contains("viewModel.selectedTranscriptLanguage"),
+            "Transcript export should use the selected transcript language."
+        )
+    }
+
     private func meetingDetailViewSource() throws -> String {
         let testsFileURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testsFileURL

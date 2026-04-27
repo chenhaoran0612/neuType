@@ -1,6 +1,28 @@
 import Foundation
 import GRDB
 
+enum MeetingTranscriptLanguage: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case original
+    case english
+    case chinese
+    case arabic
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .original:
+            return "原始"
+        case .english:
+            return "英文"
+        case .chinese:
+            return "中文"
+        case .arabic:
+            return "阿语"
+        }
+    }
+}
+
 struct MeetingTranscriptSegment: Identifiable, Codable, FetchableRecord, PersistableRecord, Equatable, Sendable {
     let id: UUID
     let meetingID: UUID
@@ -50,5 +72,23 @@ struct MeetingTranscriptSegment: Identifiable, Codable, FetchableRecord, Persist
         static let textEN = Column(CodingKeys.textEN)
         static let textZH = Column(CodingKeys.textZH)
         static let textAR = Column(CodingKeys.textAR)
+    }
+
+    func displayText(for language: MeetingTranscriptLanguage) -> String {
+        switch language {
+        case .original:
+            return text
+        case .english:
+            return nonEmptyTranslation(textEN) ?? text
+        case .chinese:
+            return nonEmptyTranslation(textZH) ?? text
+        case .arabic:
+            return nonEmptyTranslation(textAR) ?? text
+        }
+    }
+
+    private func nonEmptyTranslation(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : value
     }
 }

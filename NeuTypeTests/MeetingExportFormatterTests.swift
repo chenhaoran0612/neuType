@@ -44,7 +44,7 @@ final class MeetingExportFormatterTests: XCTestCase {
             text,
             """
             SQL产品规划等讨论
-            会议时间：Apr 12, 2026 at 23:03
+            会议时间：\(MeetingExportFormatter.formatMeetingDate(meetingDate))
 
             说话人1  00:00
             第一段内容
@@ -52,6 +52,43 @@ final class MeetingExportFormatterTests: XCTestCase {
             说话人2  00:14
             第二段内容（）
             """
+        )
+    }
+
+    func testTranscriptTextUsesProvidedSegmentTextSelector() {
+        let meetingID = UUID()
+        let meetingDate = Date(timeIntervalSince1970: 0)
+        let segments = [
+            MeetingTranscriptSegment(
+                id: UUID(),
+                meetingID: meetingID,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                startTime: 0,
+                endTime: 10,
+                text: "你好",
+                textEN: "Hello"
+            )
+        ]
+
+        let text = MeetingExportFormatter.transcriptText(
+            meetingTitle: "客户会议",
+            meetingDate: meetingDate,
+            segments: segments,
+            textProvider: { $0.displayText(for: .english) }
+        )
+
+        XCTAssertTrue(text.contains("\nHello"))
+        XCTAssertFalse(text.contains("\n你好"))
+    }
+
+    func testTranscriptFileNameIncludesSelectedLanguageSuffix() {
+        XCTAssertEqual(
+            MeetingExportFormatter.transcriptFileName(
+                meetingTitle: "客户/会议",
+                language: .chinese
+            ),
+            "客户-会议-中文.txt"
         )
     }
 

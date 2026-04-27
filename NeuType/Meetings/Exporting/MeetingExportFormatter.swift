@@ -4,7 +4,8 @@ enum MeetingExportFormatter {
     static func transcriptText(
         meetingTitle: String,
         meetingDate: Date,
-        segments: [MeetingTranscriptSegment]
+        segments: [MeetingTranscriptSegment],
+        textProvider: (MeetingTranscriptSegment) -> String = { $0.text }
     ) -> String {
         let header = """
         \(displayTitle(meetingTitle))
@@ -15,7 +16,7 @@ enum MeetingExportFormatter {
             .map { segment in
                 """
                 \(localizedSpeakerLabel(segment.speakerLabel))  \(formatTimestamp(segment.startTime))
-                \(segment.text)
+                \(textProvider(segment))
                 """
             }
             .joined(separator: "\n\n")
@@ -25,6 +26,16 @@ enum MeetingExportFormatter {
         }
 
         return "\(header)\n\n\(body)"
+    }
+
+    static func transcriptFileName(
+        meetingTitle: String,
+        language: MeetingTranscriptLanguage
+    ) -> String {
+        let displayedTitle = displayTitle(meetingTitle)
+        let sanitizedTitle = sanitizeFileName(displayedTitle)
+        let baseName = sanitizedTitle.isEmpty ? "文字记录" : sanitizedTitle
+        return "\(baseName)-\(language.title).txt"
     }
 
     static func audioFileName(meetingTitle: String, originalFileName: String) -> String {

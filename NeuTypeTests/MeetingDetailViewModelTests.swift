@@ -666,6 +666,78 @@ final class MeetingDetailViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testTranscriptRowsUseSelectedLanguageAndFallbackToOriginalText() async throws {
+        let meeting = MeetingRecord.fixture(status: .completed)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                text: "你好",
+                textEN: "Hello",
+                textZH: "你好",
+                textAR: "مرحبا"
+            ),
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 1,
+                speakerLabel: "Speaker 2",
+                text: "缺少翻译"
+            )
+        ])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+        viewModel.selectedTranscriptLanguage = .english
+
+        XCTAssertEqual(viewModel.transcriptRows.map(\.text), ["Hello", "缺少翻译"])
+
+        viewModel.selectedTranscriptLanguage = .arabic
+
+        XCTAssertEqual(viewModel.transcriptRows.map(\.text), ["مرحبا", "缺少翻译"])
+    }
+
+    @MainActor
+    func testTranscriptSearchFiltersSelectedLanguageText() async throws {
+        let meeting = MeetingRecord.fixture(status: .completed)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                text: "产品计划",
+                textEN: "product roadmap"
+            ),
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 1,
+                speakerLabel: "Speaker 2",
+                text: "预算讨论",
+                textEN: "budget review"
+            )
+        ])
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store
+        )
+
+        try await viewModel.load()
+        viewModel.selectedTranscriptLanguage = .english
+        viewModel.searchText = "budget"
+
+        XCTAssertEqual(viewModel.filteredTranscriptRows.map(\.sequence), [1])
+    }
+
+    @MainActor
     func testTranscriptRequestLogsExposeMostRecentASREntries() async throws {
         RequestLogStore.shared.clear()
         RequestLogStore.shared.add(.usage, "Meeting: something else")
@@ -787,10 +859,17 @@ final class MeetingDetailViewModelTests: XCTestCase {
         try await viewModel.load()
         try await viewModel.renameMeeting(to: "   ")
 
-        XCTAssertEqual(viewModel.meeting?.title, "2026-04-12 10:41")
+        let expectedTitle = defaultMeetingTitle(for: createdAt)
+        XCTAssertEqual(viewModel.meeting?.title, expectedTitle)
         let savedMeeting = try await store.fetchMeeting(id: meeting.id)
-        XCTAssertEqual(savedMeeting?.title, "2026-04-12 10:41")
+        XCTAssertEqual(savedMeeting?.title, expectedTitle)
     }
+}
+
+private func defaultMeetingTitle(for date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter.string(from: date)
 }
 
 private struct StubMeetingSummaryConfigProvider: MeetingSummaryConfigProviding {
@@ -941,7 +1020,10 @@ private extension MeetingTranscriptSegment {
         speakerLabel: String,
         startTime: TimeInterval = 0,
         endTime: TimeInterval = 1,
-        text: String = "segment"
+        text: String = "segment",
+        textEN: String = "",
+        textZH: String = "",
+        textAR: String = ""
     ) -> MeetingTranscriptSegment {
         MeetingTranscriptSegment(
             id: id,
@@ -950,7 +1032,10 @@ private extension MeetingTranscriptSegment {
             speakerLabel: speakerLabel,
             startTime: startTime,
             endTime: endTime,
-            text: text
+            text: text,
+            textEN: textEN,
+            textZH: textZH,
+            textAR: textAR
         )
     }
 }
