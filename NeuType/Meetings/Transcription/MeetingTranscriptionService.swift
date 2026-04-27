@@ -119,7 +119,10 @@ final class MeetingTranscriptionService: MeetingTranscribing, Sendable {
                     speakerLabel: $0.speakerLabel ?? "Unknown Speaker",
                     startTime: TimeInterval($0.startMS) / 1_000,
                     endTime: TimeInterval($0.endMS) / 1_000,
-                    text: $0.text
+                    text: $0.text,
+                    textEN: $0.translations?.en ?? "",
+                    textZH: $0.translations?.zh ?? "",
+                    textAR: $0.translations?.ar ?? ""
                 )
             }
             try await store.updateTranscription(

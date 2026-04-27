@@ -44,6 +44,9 @@ final class MeetingTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(saved?.status, .completed)
         XCTAssertEqual(saved?.transcriptPreview, "hello world")
         XCTAssertEqual(segments.map(\.text), ["hello", "world"])
+        XCTAssertEqual(segments.first?.textEN, "Hello")
+        XCTAssertEqual(segments.first?.textZH, "你好")
+        XCTAssertEqual(segments.first?.textAR, "مرحبا")
         XCTAssertEqual(coordinator.finalizeCalls.count, 1)
         XCTAssertEqual(coordinator.finalizeCalls.first?.expectedChunkCount, 0)
         XCTAssertEqual(coordinator.pollCalls, 1)
@@ -264,7 +267,14 @@ private extension RemoteMeetingTranscriptResult {
         .init(
             fullText: "hello world",
             segments: [
-                .init(sequence: 0, speakerLabel: "Speaker 1", startMS: 0, endMS: 1_000, text: "hello"),
+                .init(
+                    sequence: 0,
+                    speakerLabel: "Speaker 1",
+                    startMS: 0,
+                    endMS: 1_000,
+                    text: "hello",
+                    translations: .init(en: "Hello", zh: "你好", ar: "مرحبا")
+                ),
                 .init(sequence: 1, speakerLabel: "Speaker 2", startMS: 1_000, endMS: 2_000, text: "world"),
             ]
         )

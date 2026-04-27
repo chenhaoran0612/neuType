@@ -166,6 +166,15 @@ final class MeetingRecordStore: ObservableObject, @unchecked Sendable {
             }
         }
 
+        migrator.registerMigration("v5_add_transcript_translation_columns") { db in
+            let columns = try db.columns(in: MeetingTranscriptSegment.databaseTableName).map(\.name)
+            for name in ["textEN", "textZH", "textAR"] where !columns.contains(name) {
+                try db.alter(table: MeetingTranscriptSegment.databaseTableName) { table in
+                    table.add(column: name, .text).notNull().defaults(to: "")
+                }
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -260,7 +269,10 @@ final class MeetingRecordStore: ObservableObject, @unchecked Sendable {
                     speakerLabel: payload.speakerLabel,
                     startTime: payload.startTime,
                     endTime: payload.endTime,
-                    text: payload.text
+                    text: payload.text,
+                    textEN: payload.textEN,
+                    textZH: payload.textZH,
+                    textAR: payload.textAR
                 )
                 try segment.insert(db)
             }

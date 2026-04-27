@@ -44,6 +44,34 @@ final class MeetingRecordStoreTests: XCTestCase {
         XCTAssertEqual(saved?.transcriptPreview, "service unavailable")
     }
 
+    func testUpdateTranscriptionPersistsSegmentTranslations() async throws {
+        let store = try MeetingRecordStore.inMemory()
+        let meeting = makeMeeting(status: .processing)
+        try await store.insertMeeting(meeting, segments: [])
+
+        try await store.updateTranscription(
+            meetingID: meeting.id,
+            fullText: "你好",
+            segments: [
+                MeetingTranscriptionSegmentPayload(
+                    sequence: 0,
+                    speakerLabel: "Speaker 1",
+                    startTime: 0,
+                    endTime: 1,
+                    text: "你好",
+                    textEN: "Hello",
+                    textZH: "你好",
+                    textAR: "مرحبا"
+                )
+            ]
+        )
+
+        let saved = try await store.fetchSegments(meetingID: meeting.id)
+        XCTAssertEqual(saved.first?.textEN, "Hello")
+        XCTAssertEqual(saved.first?.textZH, "你好")
+        XCTAssertEqual(saved.first?.textAR, "مرحبا")
+    }
+
     func testFetchMeetingsKeepsProcessingMeetingMarkedDuringCurrentSession() async throws {
         let store = try MeetingRecordStore.inMemory()
         let stale = makeMeeting(

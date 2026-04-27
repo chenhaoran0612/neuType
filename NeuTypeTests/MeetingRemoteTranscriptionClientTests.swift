@@ -277,7 +277,7 @@ final class MeetingRemoteTranscriptionClientTests: XCTestCase {
                 return (
                     URLProtocolStub.makeHTTPURLResponse(for: request, statusCode: 200),
                     #"""
-                    {"request_id":"req_done","data":{"session_id":"mts_done","status":"completed","input_mode":"live_chunks","full_text":"hello world","segments":[{"sequence":0,"speaker_label":"Speaker 1","start_ms":0,"end_ms":1000,"text":"hello"},{"sequence":1,"speaker_label":"Speaker 2","start_ms":1000,"end_ms":2000,"text":"world"}]},"error":null}
+                    {"request_id":"req_done","data":{"session_id":"mts_done","status":"completed","input_mode":"live_chunks","full_text":"hello world","segments":[{"sequence":0,"speaker_label":"Speaker 1","start_ms":0,"end_ms":1000,"text":"hello","translations":{"en":"Hello","zh":"你好","ar":"مرحبا"}},{"sequence":1,"speaker_label":"Speaker 2","start_ms":1000,"end_ms":2000,"text":"world"}]},"error":null}
                     """#.data(using: .utf8)!
                 )
             },
@@ -291,6 +291,9 @@ final class MeetingRemoteTranscriptionClientTests: XCTestCase {
         XCTAssertEqual(status.transcriptResult?.segments.count, 2)
         XCTAssertEqual(status.transcriptResult?.segments[0].speakerLabel, "Speaker 1")
         XCTAssertEqual(status.transcriptResult?.segments[0].startMS, 0)
+        XCTAssertEqual(status.transcriptResult?.segments[0].translations?.en, "Hello")
+        XCTAssertEqual(status.transcriptResult?.segments[0].translations?.zh, "你好")
+        XCTAssertEqual(status.transcriptResult?.segments[0].translations?.ar, "مرحبا")
         XCTAssertEqual(status.transcriptResult?.segments[1].text, "world")
     }
 

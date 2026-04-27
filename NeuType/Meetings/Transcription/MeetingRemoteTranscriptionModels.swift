@@ -235,6 +235,7 @@ struct RemoteMeetingTranscriptSegment: Codable, Equatable, Sendable {
     let startMS: Int
     let endMS: Int
     let text: String
+    let translations: RemoteMeetingTranscriptSegmentTranslations?
 
     enum CodingKeys: String, CodingKey {
         case sequence
@@ -242,7 +243,30 @@ struct RemoteMeetingTranscriptSegment: Codable, Equatable, Sendable {
         case startMS = "start_ms"
         case endMS = "end_ms"
         case text
+        case translations
     }
+
+    init(
+        sequence: Int,
+        speakerLabel: String?,
+        startMS: Int,
+        endMS: Int,
+        text: String,
+        translations: RemoteMeetingTranscriptSegmentTranslations? = nil
+    ) {
+        self.sequence = sequence
+        self.speakerLabel = speakerLabel
+        self.startMS = startMS
+        self.endMS = endMS
+        self.text = text
+        self.translations = translations
+    }
+}
+
+struct RemoteMeetingTranscriptSegmentTranslations: Codable, Equatable, Sendable {
+    let en: String?
+    let zh: String?
+    let ar: String?
 }
 
 struct MeetingRemoteTranscriptionFullAudioUploadRequest: Codable, Equatable, Sendable {
