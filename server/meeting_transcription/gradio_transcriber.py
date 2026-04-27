@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -30,7 +31,7 @@ _PLACEHOLDER_PHRASES = {
 @dataclass(slots=True)
 class GradioChunkTranscriber(ChunkTranscriber):
     base_url: str
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     temperature: float = 0.0
     top_p: float = 1.0
     do_sample: bool = False
@@ -114,7 +115,11 @@ class GradioChunkTranscriber(ChunkTranscriber):
         }
 
     def _extract_json_segments(self, raw_output: str) -> list[dict[str, object]]:
-        for candidate in self._json_candidates(raw_output):
+        candidates = [
+            *self._json_candidates(raw_output),
+            *self._python_literal_candidates(raw_output),
+        ]
+        for candidate in candidates:
             segments = self._coerce_segments_candidate(candidate)
             if segments is not None:
                 return segments
@@ -144,6 +149,63 @@ class GradioChunkTranscriber(ChunkTranscriber):
             candidates.append(parsed)
 
         return candidates
+
+    def _python_literal_candidates(self, raw_output: str) -> list[object]:
+        candidates: list[object] = []
+        seen: set[tuple[int, int]] = set()
+
+        for index, char in enumerate(raw_output):
+            if char not in "[{":
+                continue
+
+            literal_text = self._balanced_literal_text(raw_output, index)
+            if literal_text is None:
+                continue
+
+            key = (index, len(literal_text))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            try:
+                candidates.append(ast.literal_eval(literal_text))
+            except (SyntaxError, ValueError):
+                continue
+
+        return candidates
+
+    def _balanced_literal_text(self, text: str, start_index: int) -> str | None:
+        closing_for = {"[": "]", "{": "}"}
+        stack: list[str] = []
+        quote: str | None = None
+        escaped = False
+
+        for offset, char in enumerate(text[start_index:]):
+            if quote is not None:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+
+            if char in ("'", '"'):
+                quote = char
+                continue
+
+            if char in closing_for:
+                stack.append(closing_for[char])
+                continue
+
+            if char in "]}":
+                if not stack or char != stack[-1]:
+                    return None
+                stack.pop()
+                if not stack:
+                    return text[start_index : start_index + offset + 1]
+
+        return None
 
     def _coerce_segments_candidate(
         self, candidate: object

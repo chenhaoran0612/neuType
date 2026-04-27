@@ -28,7 +28,7 @@ def load_worker_runtime_settings() -> WorkerRuntimeSettings:
             "MEETING_TRANSCRIPTION_GRADIO_BASE_URL",
             default=DEFAULT_GRADIO_BASE_URL,
         ),
-        max_tokens=_env_int("MEETING_TRANSCRIPTION_GRADIO_MAX_TOKENS", default=4096),
+        max_tokens=_env_int("MEETING_TRANSCRIPTION_GRADIO_MAX_TOKENS", default=8192),
         temperature=_env_float("MEETING_TRANSCRIPTION_GRADIO_TEMPERATURE", default=0.0),
         top_p=_env_float("MEETING_TRANSCRIPTION_GRADIO_TOP_P", default=1.0),
         do_sample=_env_bool("MEETING_TRANSCRIPTION_GRADIO_DO_SAMPLE", default=False),

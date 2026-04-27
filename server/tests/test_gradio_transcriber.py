@@ -204,6 +204,50 @@ def test_gradio_transcriber_accepts_object_wrapped_segments(tmp_path):
     ]
 
 
+def test_gradio_transcriber_accepts_python_repr_segment_array_after_partial_parse(tmp_path):
+    client = RecordingClient(
+        (
+            "--- ✅ Transcription Complete ---\n"
+            "⚠️ Partial parse: 2 segments recovered from truncated response -- "
+            "[{'Start': 0.0, 'End': 2.25, 'Speaker': 0, 'Content': 'hello'}, "
+            "{'Start': 2.25, 'End': 4.5, 'Speaker': 1, 'Content': 'world'}]",
+            "",
+            "",
+            None,
+        )
+    )
+    transcriber = GradioChunkTranscriber(
+        base_url="https://546463aae3e7327f37.gradio.live/",
+        client=client,
+    )
+
+    audio_path = tmp_path / "chunk.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    result = transcriber.transcribe_chunk(
+        session=DummySession(),
+        chunk=DummyChunk(),
+        audio_path=str(audio_path),
+        prefix_plan=None,
+    )
+
+    assert result["text"] == "hello world"
+    assert result["segments"] == [
+        {
+            "text": "hello",
+            "start_ms": 0,
+            "end_ms": 2250,
+            "speaker_label": "Speaker 1",
+        },
+        {
+            "text": "world",
+            "start_ms": 2250,
+            "end_ms": 4500,
+            "speaker_label": "Speaker 2",
+        },
+    ]
+
+
 def test_gradio_transcriber_rejects_unparseable_raw_output(tmp_path):
     client = RecordingClient(("model returned plain text only", "", "", None))
     transcriber = GradioChunkTranscriber(
