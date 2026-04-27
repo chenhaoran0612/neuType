@@ -50,6 +50,47 @@ class AlwaysFailingTranscriber:
         raise RuntimeError("persistent model outage")
 
 
+class SegmentTranscriber:
+    def transcribe_chunk(
+        self, *, session: TranscriptionSession, chunk: SessionChunk, audio_path: str, prefix_plan=None
+    ):
+        del session, audio_path, prefix_plan
+        return {
+            "text": f"chunk-{chunk.chunk_index}",
+            "segment_count": 1,
+            "segments": [
+                {
+                    "text": f"chunk-{chunk.chunk_index}",
+                    "start_ms": 0,
+                    "end_ms": 1000,
+                    "speaker_label": "Speaker 1",
+                }
+            ],
+        }
+
+
+class RecordingTranslator:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def translate_segments(self, segments):
+        self.calls.append([segment.text for segment in segments])
+        return {
+            index: {
+                "en": f"en:{segment.text}",
+                "zh": f"zh:{segment.text}",
+                "ar": f"ar:{segment.text}",
+            }
+            for index, segment in enumerate(segments)
+        }
+
+
+class FailingTranslator:
+    def translate_segments(self, segments):
+        del segments
+        raise RuntimeError("translation outage")
+
+
 class WorkerHarness:
     def __init__(self, tmp_path: Path) -> None:
         self.storage = LocalArtifactStorage(tmp_path / "artifacts")
@@ -226,11 +267,14 @@ class WorkerHarness:
         finally:
             db.close()
 
-    def run_once(self, transcriber=None) -> bool:
+    def run_once(self, transcriber=None, translator=None) -> bool:
         db = self.session_factory()
         try:
             return run_pending_chunk_once(
-                db, transcriber or self.transcriber, storage=self.storage
+                db,
+                transcriber or self.transcriber,
+                storage=self.storage,
+                translator=translator,
             )
         finally:
             db.close()
@@ -511,9 +555,48 @@ def test_worker_creates_anchor_then_uses_prefix_plan_and_persists_normalized_seg
             "end_ms": 301100,
             "speaker_label": "Speaker 9",
             "speaker_key": "speaker_1",
+            "translations": {"en": "", "zh": "", "ar": ""},
         }
     ]
     assert second_chunk.result_segment_count == 1
+
+
+def test_worker_translates_normalized_segments_before_marking_processed(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks([0])
+    translator = RecordingTranslator()
+
+    assert worker_harness.run_once(
+        transcriber=SegmentTranscriber(),
+        translator=translator,
+    )
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    payload = json.loads(chunk.normalized_segments_json)
+    assert chunk.process_status == "processed"
+    assert payload[0]["translations"] == {
+        "en": "en:chunk-0",
+        "zh": "zh:chunk-0",
+        "ar": "ar:chunk-0",
+    }
+    assert translator.calls == [["chunk-0"]]
+
+
+def test_worker_keeps_chunk_processed_when_translation_fails(
+    worker_harness: WorkerHarness,
+):
+    session = worker_harness.seed_session_with_chunks([0])
+
+    assert worker_harness.run_once(
+        transcriber=SegmentTranscriber(),
+        translator=FailingTranslator(),
+    )
+
+    chunk = worker_harness.fetch_chunk(session.session_id, 0, "live_chunk")
+    payload = json.loads(chunk.normalized_segments_json)
+    assert chunk.process_status == "processed"
+    assert payload[0]["translations"] == {"en": "", "zh": "", "ar": ""}
 
 
 def test_advance_commit_frontier_skips_unsupported_float_wav_anchor_sources(
@@ -730,6 +813,7 @@ def test_worker_rebuilds_prefix_manifest_from_actual_anchor_wav_duration(
             "end_ms": 301100,
             "speaker_label": "Speaker 9",
             "speaker_key": None,
+            "translations": {"en": "", "zh": "", "ar": ""},
         }
     ]
 
@@ -1014,6 +1098,7 @@ def test_worker_remaps_no_prefix_chunk_segments_to_absolute_timeline(
             "end_ms": 301600,
             "speaker_label": "Speaker 3",
             "speaker_key": None,
+            "translations": {"en": "", "zh": "", "ar": ""},
         }
     ]
 
@@ -1057,6 +1142,7 @@ def test_worker_preserves_no_prefix_already_absolute_timestamps(
             "end_ms": 301600,
             "speaker_label": "Speaker 3",
             "speaker_key": None,
+            "translations": {"en": "", "zh": "", "ar": ""},
         }
     ]
 

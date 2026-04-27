@@ -298,7 +298,7 @@ def segments_to_payload(segments: list[Segment]) -> list[dict[str, object]]:
             item["translations"] = {
                 key: value
                 for key, value in segment.translations.items()
-                if key in {"en", "zh", "ar"} and value
+                if key in {"en", "zh", "ar"}
             }
         payload.append(item)
     return payload

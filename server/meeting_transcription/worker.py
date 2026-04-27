@@ -28,6 +28,12 @@ from meeting_transcription.audio_chunks import split_full_audio_into_chunks
 from meeting_transcription.models import TranscriptionSession
 from meeting_transcription.storage import LocalArtifactStorage
 from meeting_transcription.transcriber import ChunkTranscriber
+from meeting_transcription.translation import (
+    NoopSegmentTranslator,
+    SegmentTranslator,
+    apply_translations,
+    segments_with_empty_translations,
+)
 
 
 def run_pending_chunk_once(
@@ -35,6 +41,7 @@ def run_pending_chunk_once(
     transcriber: ChunkTranscriber,
     *,
     storage: LocalArtifactStorage,
+    translator: SegmentTranslator | None = None,
 ) -> bool:
     """Run one worker step: advance commits, split fallback audio, or process a chunk."""
     if repositories.advance_commit_frontier(db, storage=storage):
@@ -76,6 +83,18 @@ def run_pending_chunk_once(
                 else None
             ),
         )
+        if normalized_segments is not None:
+            segment_translator = translator or NoopSegmentTranslator()
+            try:
+                translations = segment_translator.translate_segments(normalized_segments)
+                normalized_segments = apply_translations(
+                    normalized_segments,
+                    translations,
+                )
+            except Exception:
+                normalized_segments = segments_with_empty_translations(
+                    normalized_segments
+                )
         repositories.mark_chunk_processed(
             db,
             chunk,
