@@ -14,6 +14,19 @@ if [[ -z "${DEVELOPMENT_TEAM}" ]]; then
   DEVELOPMENT_TEAM="${DEFAULT_TEAM_ID}"
 fi
 
+NOTARY_ARGS=()
+if [[ -n "${APPLE_ID:-}" && -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+  echo "Using Apple ID notarization credentials from environment."
+  NOTARY_ARGS=(
+    "--apple-id" "${APPLE_ID}"
+    "--password" "${APPLE_APP_SPECIFIC_PASSWORD}"
+    "--team-id" "${APPLE_TEAM_ID}"
+  )
+else
+  echo "Using notarytool keychain profile ${KEYCHAIN_PROFILE}."
+  NOTARY_ARGS=("--keychain-profile" "${KEYCHAIN_PROFILE}")
+fi
+
 rm -rf libwhisper/build
 cmake -G Xcode -B libwhisper/build -S libwhisper
 
@@ -66,7 +79,7 @@ current_dir=$(pwd)
 cd $(dirname "${APP_PATH}") && zip -r -y "${current_dir}/${ZIP_PATH}" $(basename "${APP_PATH}")
 cd "${current_dir}"
 
-xcrun notarytool submit "${ZIP_PATH}" --wait --keychain-profile "${KEYCHAIN_PROFILE}"
+xcrun notarytool submit "${ZIP_PATH}" --wait "${NOTARY_ARGS[@]}"
 
 xcrun stapler staple "${APP_PATH}"
 
@@ -77,7 +90,7 @@ ln -sfn /Applications "build/dmg-root/Applications"
 hdiutil create -volname "${APP_NAME}Installer-$(date +%s)" -srcfolder "build/dmg-root" -ov -format UDZO "${APP_NAME}.dmg"
 
 codesign --sign "${CODE_SIGN_IDENTITY}" "${APP_NAME}.dmg"
-xcrun notarytool submit "${APP_NAME}.dmg" --wait --keychain-profile "${KEYCHAIN_PROFILE}"
+xcrun notarytool submit "${APP_NAME}.dmg" --wait "${NOTARY_ARGS[@]}"
 xcrun stapler staple "${APP_NAME}.dmg"  
 
 echo "Successfully notarized ${APP_NAME}"
