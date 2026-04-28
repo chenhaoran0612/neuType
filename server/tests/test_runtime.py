@@ -27,6 +27,8 @@ def test_load_worker_runtime_settings_includes_translation_env(monkeypatch):
     monkeypatch.setenv("MEETING_TRANSCRIPTION_TRANSLATION_API_KEY", "secret")
     monkeypatch.setenv("MEETING_TRANSCRIPTION_TRANSLATION_MODEL", "gpt-4.1-mini")
     monkeypatch.setenv("MEETING_TRANSCRIPTION_TRANSLATION_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("MEETING_TRANSCRIPTION_TRANSLATION_BATCH_SIZE", "3")
+    monkeypatch.setenv("MEETING_TRANSCRIPTION_TRANSLATION_MAX_ATTEMPTS", "4")
 
     settings = load_worker_runtime_settings()
 
@@ -34,6 +36,8 @@ def test_load_worker_runtime_settings_includes_translation_env(monkeypatch):
     assert settings.translation_api_key == "secret"
     assert settings.translation_model == "gpt-4.1-mini"
     assert settings.translation_timeout_seconds == 12.5
+    assert settings.translation_batch_size == 3
+    assert settings.translation_max_attempts == 4
 
 
 def test_create_segment_translator_uses_noop_when_unconfigured():
@@ -49,6 +53,8 @@ def test_create_segment_translator_uses_noop_when_unconfigured():
         translation_api_key="",
         translation_model="",
         translation_timeout_seconds=60.0,
+        translation_batch_size=1,
+        translation_max_attempts=2,
     )
 
     translator = create_segment_translator_from_settings(settings)
@@ -69,8 +75,12 @@ def test_create_segment_translator_uses_openai_compatible_translator_when_config
         translation_api_key="secret",
         translation_model="gpt-4.1-mini",
         translation_timeout_seconds=12.5,
+        translation_batch_size=3,
+        translation_max_attempts=4,
     )
 
     translator = create_segment_translator_from_settings(settings)
 
     assert isinstance(translator, OpenAICompatibleSegmentTranslator)
+    assert translator.batch_size == 3
+    assert translator.max_attempts == 4

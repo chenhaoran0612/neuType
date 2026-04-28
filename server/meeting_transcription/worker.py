@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import wave
 
@@ -34,6 +35,8 @@ from meeting_transcription.translation import (
     apply_translations,
     segments_with_empty_translations,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def run_pending_chunk_once(
@@ -87,11 +90,31 @@ def run_pending_chunk_once(
             segment_translator = translator or NoopSegmentTranslator()
             try:
                 translations = segment_translator.translate_segments(normalized_segments)
+                translated_count = sum(
+                    1
+                    for translation in translations.values()
+                    if any(value for value in translation.values())
+                )
+                logger.info(
+                    "translated meeting transcript chunk session=%s chunk=%s translator=%s segments=%s translated=%s",
+                    session.session_id,
+                    chunk.chunk_index,
+                    type(segment_translator).__name__,
+                    len(normalized_segments),
+                    translated_count,
+                )
                 normalized_segments = apply_translations(
                     normalized_segments,
                     translations,
                 )
             except Exception:
+                logger.exception(
+                    "meeting transcript translation failed session=%s chunk=%s translator=%s segments=%s",
+                    session.session_id,
+                    chunk.chunk_index,
+                    type(segment_translator).__name__,
+                    len(normalized_segments),
+                )
                 normalized_segments = segments_with_empty_translations(
                     normalized_segments
                 )

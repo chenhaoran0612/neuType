@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 
 from meeting_transcription.gradio_transcriber import GradioChunkTranscriber
@@ -14,6 +15,7 @@ from meeting_transcription.translation import (
 )
 
 DEFAULT_GRADIO_BASE_URL = "https://546463aae3e7327f37.gradio.live/"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +31,8 @@ class WorkerRuntimeSettings:
     translation_api_key: str
     translation_model: str
     translation_timeout_seconds: float
+    translation_batch_size: int
+    translation_max_attempts: int
 
 
 def load_worker_runtime_settings() -> WorkerRuntimeSettings:
@@ -57,6 +61,12 @@ def load_worker_runtime_settings() -> WorkerRuntimeSettings:
         translation_timeout_seconds=_env_float(
             "MEETING_TRANSCRIPTION_TRANSLATION_TIMEOUT_SECONDS", default=60.0
         ),
+        translation_batch_size=_env_int(
+            "MEETING_TRANSCRIPTION_TRANSLATION_BATCH_SIZE", default=1
+        ),
+        translation_max_attempts=_env_int(
+            "MEETING_TRANSCRIPTION_TRANSLATION_MAX_ATTEMPTS", default=2
+        ),
     )
 
 
@@ -83,13 +93,21 @@ def create_segment_translator_from_settings(
         or not settings.translation_api_key
         or not settings.translation_model
     ):
+        logger.info("meeting transcript segment translation disabled")
         return NoopSegmentTranslator()
 
+    logger.info(
+        "meeting transcript segment translation enabled base_url=%s model=%s",
+        settings.translation_base_url,
+        settings.translation_model,
+    )
     return OpenAICompatibleSegmentTranslator(
         base_url=settings.translation_base_url,
         api_key=settings.translation_api_key,
         model=settings.translation_model,
         timeout_seconds=settings.translation_timeout_seconds,
+        batch_size=settings.translation_batch_size,
+        max_attempts=settings.translation_max_attempts,
     )
 
 
