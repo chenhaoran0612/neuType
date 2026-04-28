@@ -136,3 +136,4 @@ artifacts/
 server/artifacts/
 meeting_transcription.db
 server/meeting_transcription.db
+server/.runtime/

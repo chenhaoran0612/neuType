@@ -74,8 +74,16 @@ class PermissionsManager: ObservableObject {
     private var permissionCheckTimer: Timer?
     private var windowObservers: [NSObjectProtocol] = []
     private let launchedWithPendingScreenRecordingRelaunch: Bool
+    private let forceAllPermissionsGrantedForTesting: Bool
 
     init() {
+        #if DEBUG
+        forceAllPermissionsGrantedForTesting = UserDefaults.standard.bool(
+            forKey: "forceAllPermissionsGrantedForTesting"
+        ) && Bundle.main.bundleIdentifier?.hasSuffix(".test") == true
+        #else
+        forceAllPermissionsGrantedForTesting = false
+        #endif
         launchedWithPendingScreenRecordingRelaunch = AppPreferences.shared.screenRecordingPermissionPendingRelaunch
         if launchedWithPendingScreenRecordingRelaunch {
             AppPreferences.shared.screenRecordingPermissionPendingRelaunch = false
@@ -150,6 +158,13 @@ class PermissionsManager: ObservableObject {
     }
 
     func checkMicrophonePermission() {
+        if forceAllPermissionsGrantedForTesting {
+            updateOnMain { [weak self] in
+                self?.isMicrophonePermissionGranted = true
+            }
+            return
+        }
+
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
 
         updateOnMain { [weak self] in
@@ -163,6 +178,14 @@ class PermissionsManager: ObservableObject {
     }
 
     func checkAccessibilityPermission() {
+        if forceAllPermissionsGrantedForTesting {
+            updateOnMain { [weak self] in
+                self?.isAccessibilityPermissionGranted = true
+                self?.accessibilityPermissionState = .granted
+            }
+            return
+        }
+
         let granted = AXIsProcessTrusted()
         updateOnMain { [weak self] in
             guard let self else { return }
@@ -175,6 +198,14 @@ class PermissionsManager: ObservableObject {
     }
 
     func checkScreenRecordingPermission() {
+        if forceAllPermissionsGrantedForTesting {
+            updateOnMain { [weak self] in
+                self?.isScreenRecordingPermissionGranted = true
+                self?.screenRecordingPermissionState = .granted
+            }
+            return
+        }
+
         let preflightGranted: Bool
         if #available(macOS 10.15, *) {
             preflightGranted = CGPreflightScreenCaptureAccess()
