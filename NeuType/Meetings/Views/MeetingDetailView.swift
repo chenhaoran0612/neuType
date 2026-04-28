@@ -560,12 +560,6 @@ private struct MeetingTranscriptPane: View {
                             .stroke(Color.black.opacity(0.12), lineWidth: 1)
                     )
 
-                    Button("下载文字记录") {
-                        exportTranscript()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
                     Picker("", selection: $viewModel.selectedTranscriptLanguage) {
                         ForEach(MeetingTranscriptLanguage.allCases) { language in
                             Text(language.title).tag(language)
@@ -574,6 +568,16 @@ private struct MeetingTranscriptPane: View {
                     .pickerStyle(.segmented)
                     .controlSize(.small)
                     .frame(width: 220)
+
+                    Button {
+                        exportTranscript()
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("下载文字记录")
+                    .accessibilityLabel("下载文字记录")
                 }
 
                 ScrollViewReader { proxy in

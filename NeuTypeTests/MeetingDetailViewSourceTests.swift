@@ -72,6 +72,25 @@ final class MeetingDetailViewSourceTests: XCTestCase {
             source.contains("Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)"),
             "Transcript pane should expose the original/translated transcript language picker without a visible label."
         )
+        XCTAssertFalse(
+            source.contains("Button(\"下载文字记录\")"),
+            "Transcript export should no longer render a text button before the language picker."
+        )
+        XCTAssertTrue(
+            source.contains("Image(systemName: \"square.and.arrow.down\")"),
+            "Transcript export should render as an icon-only download button."
+        )
+        let pickerRange = try XCTUnwrap(
+            source.range(of: "Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)")
+        )
+        let exportIconRange = try XCTUnwrap(
+            source.range(of: "Image(systemName: \"square.and.arrow.down\")")
+        )
+        XCTAssertLessThan(
+            pickerRange.lowerBound,
+            exportIconRange.lowerBound,
+            "Transcript download icon should appear after the four language options."
+        )
         XCTAssertTrue(
             source.contains("MeetingTranscriptLanguage.allCases"),
             "Transcript pane should render every supported transcript language option."
