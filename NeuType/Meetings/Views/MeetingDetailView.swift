@@ -560,24 +560,26 @@ private struct MeetingTranscriptPane: View {
                             .stroke(Color.black.opacity(0.12), lineWidth: 1)
                     )
 
-                    Picker("", selection: $viewModel.selectedTranscriptLanguage) {
-                        ForEach(MeetingTranscriptLanguage.allCases) { language in
-                            Text(language.title).tag(language)
+                    HStack(spacing: 0) {
+                        Picker("", selection: $viewModel.selectedTranscriptLanguage) {
+                            ForEach(MeetingTranscriptLanguage.allCases) { language in
+                                Text(language.title).tag(language)
+                            }
                         }
-                    }
-                    .pickerStyle(.segmented)
-                    .controlSize(.small)
-                    .frame(width: 220)
+                        .pickerStyle(.segmented)
+                        .controlSize(.small)
+                        .frame(width: 220)
 
-                    Button {
-                        exportTranscript()
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
+                        Button {
+                            exportTranscript()
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("下载文字记录")
+                        .accessibilityLabel("下载文字记录")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("下载文字记录")
-                    .accessibilityLabel("下载文字记录")
                 }
 
                 ScrollViewReader { proxy in

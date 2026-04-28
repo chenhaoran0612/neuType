@@ -92,6 +92,10 @@ final class MeetingDetailViewSourceTests: XCTestCase {
             "Transcript download icon should appear after the four language options."
         )
         XCTAssertTrue(
+            source.contains("HStack(spacing: 0) {\n                        Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)"),
+            "Transcript language picker and download icon should sit next to each other without toolbar spacing."
+        )
+        XCTAssertTrue(
             source.contains("MeetingTranscriptLanguage.allCases"),
             "Transcript pane should render every supported transcript language option."
         )
