@@ -124,6 +124,10 @@ class GradioChunkTranscriber(ChunkTranscriber):
             if segments is not None:
                 return segments
 
+        partial_segments = self._partial_segment_candidates(raw_output)
+        if partial_segments:
+            return partial_segments
+
         preview = re.sub(r"\s+", " ", raw_output).strip()[:240]
         raise ValueError(
             "gradio raw output did not contain a JSON segment array"
@@ -174,6 +178,42 @@ class GradioChunkTranscriber(ChunkTranscriber):
 
         return candidates
 
+    def _partial_segment_candidates(self, raw_output: str) -> list[dict[str, object]]:
+        decoder = json.JSONDecoder()
+        candidates: list[tuple[int, dict[str, object]]] = []
+        seen: set[tuple[int, int]] = set()
+
+        for index, char in enumerate(raw_output):
+            if char != "{":
+                continue
+
+            parsed: object
+            end: int
+            try:
+                parsed, end = decoder.raw_decode(raw_output[index:])
+            except json.JSONDecodeError:
+                literal_text = self._balanced_literal_text(raw_output, index)
+                if literal_text is None:
+                    continue
+                try:
+                    parsed = ast.literal_eval(literal_text)
+                except (SyntaxError, ValueError):
+                    continue
+                end = len(literal_text)
+
+            if not isinstance(parsed, dict):
+                continue
+            if not self._is_segment_candidate(parsed):
+                continue
+
+            key = (index, end)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((index, parsed))
+
+        return [candidate for _, candidate in sorted(candidates, key=lambda item: item[0])]
+
     def _balanced_literal_text(self, text: str, start_index: int) -> str | None:
         closing_for = {"[": "]", "{": "}"}
         stack: list[str] = []
@@ -206,6 +246,9 @@ class GradioChunkTranscriber(ChunkTranscriber):
                     return text[start_index : start_index + offset + 1]
 
         return None
+
+    def _is_segment_candidate(self, value: dict[str, object]) -> bool:
+        return {"Start", "End", "Content"}.issubset(value.keys())
 
     def _coerce_segments_candidate(
         self, candidate: object
