@@ -68,20 +68,28 @@ final class MeetingDetailViewSourceTests: XCTestCase {
             source.contains("Picker(\"文字语言\", selection: $viewModel.selectedTranscriptLanguage)"),
             "Transcript pane should not render the redundant visible '文字语言' label."
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             source.contains("Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)"),
-            "Transcript pane should expose the original/translated transcript language picker without a visible label."
+            "Transcript pane should not render the language options as a separate native picker."
         )
         XCTAssertFalse(
             source.contains("Button(\"下载文字记录\")"),
             "Transcript export should no longer render a text button before the language picker."
         )
         XCTAssertTrue(
+            source.contains("ForEach(MeetingTranscriptLanguage.allCases) { language in"),
+            "Transcript pane should render every language option inside the unified control."
+        )
+        XCTAssertTrue(
+            source.contains("viewModel.selectedTranscriptLanguage = language"),
+            "Transcript language options should still update the selected transcript language."
+        )
+        XCTAssertTrue(
             source.contains("Image(systemName: \"square.and.arrow.down\")"),
             "Transcript export should render as an icon-only download button."
         )
         let pickerRange = try XCTUnwrap(
-            source.range(of: "Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)")
+            source.range(of: "ForEach(MeetingTranscriptLanguage.allCases) { language in")
         )
         let exportIconRange = try XCTUnwrap(
             source.range(of: "Image(systemName: \"square.and.arrow.down\")")
@@ -92,8 +100,8 @@ final class MeetingDetailViewSourceTests: XCTestCase {
             "Transcript download icon should appear after the four language options."
         )
         XCTAssertTrue(
-            source.contains("HStack(spacing: 0) {\n                        Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)"),
-            "Transcript language picker and download icon should sit next to each other without toolbar spacing."
+            source.contains("HStack(spacing: 0) {\n                        ForEach(MeetingTranscriptLanguage.allCases) { language in"),
+            "Transcript language options and download icon should sit in one five-item row without toolbar spacing."
         )
         XCTAssertTrue(
             source.contains("MeetingTranscriptLanguage.allCases"),

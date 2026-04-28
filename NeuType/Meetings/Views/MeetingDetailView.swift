@@ -561,25 +561,32 @@ private struct MeetingTranscriptPane: View {
                     )
 
                     HStack(spacing: 0) {
-                        Picker("", selection: $viewModel.selectedTranscriptLanguage) {
-                            ForEach(MeetingTranscriptLanguage.allCases) { language in
-                                Text(language.title).tag(language)
-                            }
+                        ForEach(MeetingTranscriptLanguage.allCases) { language in
+                            transcriptLanguageButton(for: language)
+                            transcriptControlDivider()
                         }
-                        .pickerStyle(.segmented)
-                        .controlSize(.small)
-                        .frame(width: 220)
 
                         Button {
                             exportTranscript()
                         } label: {
                             Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .frame(width: 36, height: 28)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
                         .help("下载文字记录")
                         .accessibilityLabel("下载文字记录")
                     }
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.black.opacity(0.14), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
 
                 ScrollViewReader { proxy in
@@ -745,6 +752,29 @@ private struct MeetingTranscriptPane: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.black.opacity(0.08), lineWidth: 1)
         )
+    }
+
+    private func transcriptLanguageButton(for language: MeetingTranscriptLanguage) -> some View {
+        let isSelected = viewModel.selectedTranscriptLanguage == language
+        return Button {
+            viewModel.selectedTranscriptLanguage = language
+        } label: {
+            Text(language.title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .frame(width: 46, height: 28)
+                .background(isSelected ? Color.accentColor : Color.clear)
+        }
+        .buttonStyle(.plain)
+        .help(language.title)
+        .accessibilityLabel(language.title)
+        .accessibilityValue(isSelected ? "已选择" : "")
+    }
+
+    private func transcriptControlDivider() -> some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.12))
+            .frame(width: 1, height: 18)
     }
 
     private func speakerBadge(for label: String) -> String {
