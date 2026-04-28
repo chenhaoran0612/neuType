@@ -704,6 +704,52 @@ final class MeetingDetailViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadRefreshesMissingCompletedTranscriptTranslations() async throws {
+        let meeting = MeetingRecord.fixture(status: .completed)
+        let store = try MeetingRecordStore.inMemory()
+        try await store.insertMeeting(meeting, segments: [
+            MeetingTranscriptSegment.fixture(
+                meetingID: meeting.id,
+                sequence: 0,
+                speakerLabel: "Speaker 1",
+                text: "مرحبا"
+            )
+        ])
+        let refresher = StubTranscriptTranslationRefresher { meetingID, _ in
+            try await store.updateTranscription(
+                meetingID: meetingID,
+                fullText: "مرحبا",
+                segments: [
+                    MeetingTranscriptionSegmentPayload(
+                        sequence: 0,
+                        speakerLabel: "Speaker 1",
+                        startTime: 0,
+                        endTime: 1,
+                        text: "مرحبا",
+                        textEN: "Hello",
+                        textZH: "你好",
+                        textAR: "مرحبا"
+                    )
+                ]
+            )
+            return true
+        }
+
+        let viewModel = MeetingDetailViewModel(
+            meetingID: meeting.id,
+            audioURL: meeting.audioURL,
+            store: store,
+            transcriptTranslationRefresher: refresher
+        )
+
+        try await viewModel.load()
+        viewModel.selectedTranscriptLanguage = .chinese
+
+        XCTAssertEqual(refresher.refreshedMeetingIDs, [meeting.id])
+        XCTAssertEqual(viewModel.transcriptRows.map(\.text), ["你好"])
+    }
+
+    @MainActor
     func testTranscriptSearchFiltersSelectedLanguageText() async throws {
         let meeting = MeetingRecord.fixture(status: .completed)
         let store = try MeetingRecordStore.inMemory()
@@ -927,6 +973,23 @@ private final class StubMeetingTranscriber: MeetingTranscribing, @unchecked Send
                 )
             ]
         )
+    }
+}
+
+private final class StubTranscriptTranslationRefresher: MeetingTranscriptTranslationRefreshing, @unchecked Sendable {
+    var refreshedMeetingIDs: [UUID] = []
+    private let handler: (UUID, [MeetingTranscriptSegment]) async throws -> Bool
+
+    init(handler: @escaping (UUID, [MeetingTranscriptSegment]) async throws -> Bool) {
+        self.handler = handler
+    }
+
+    func refreshCompletedTranslationsIfNeeded(
+        meetingID: UUID,
+        existingSegments: [MeetingTranscriptSegment]
+    ) async throws -> Bool {
+        refreshedMeetingIDs.append(meetingID)
+        return try await handler(meetingID, existingSegments)
     }
 }
 

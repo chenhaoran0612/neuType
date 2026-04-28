@@ -4,6 +4,13 @@ protocol MeetingTranscribing: Sendable {
     func transcribe(meetingID: UUID, audioURL: URL) async throws
 }
 
+protocol MeetingTranscriptTranslationRefreshing: Sendable {
+    func refreshCompletedTranslationsIfNeeded(
+        meetingID: UUID,
+        existingSegments: [MeetingTranscriptSegment]
+    ) async throws -> Bool
+}
+
 final class MeetingTranscriptionService: MeetingTranscribing, Sendable {
     private enum Backend: Sendable {
         case local(any VibeVoiceRunning)
@@ -134,6 +141,81 @@ final class MeetingTranscriptionService: MeetingTranscribing, Sendable {
     }
 
     private static func remoteLedgerURL(meetingID: UUID) -> URL {
+        MeetingRecord.meetingsDirectory
+            .appendingPathComponent("remote-session-ledgers", isDirectory: true)
+            .appendingPathComponent("\(meetingID.uuidString).json")
+    }
+}
+
+final class MeetingRemoteTranscriptTranslationRefresher: MeetingTranscriptTranslationRefreshing, Sendable {
+    private let client: MeetingRemoteTranscriptionServing
+    private let store: MeetingRecordStore
+    private let ledgerURL: @Sendable (UUID) -> URL
+
+    init(
+        client: MeetingRemoteTranscriptionServing = MeetingRemoteTranscriptionClient(),
+        store: MeetingRecordStore = .shared,
+        ledgerURL: @escaping @Sendable (UUID) -> URL = MeetingRemoteTranscriptTranslationRefresher.defaultLedgerURL
+    ) {
+        self.client = client
+        self.store = store
+        self.ledgerURL = ledgerURL
+    }
+
+    func refreshCompletedTranslationsIfNeeded(
+        meetingID: UUID,
+        existingSegments: [MeetingTranscriptSegment]
+    ) async throws -> Bool {
+        guard existingSegments.contains(where: { !$0.hasCompleteTranslations }) else {
+            return false
+        }
+
+        let ledgerFileURL = ledgerURL(meetingID)
+        guard FileManager.default.fileExists(atPath: ledgerFileURL.path) else {
+            return false
+        }
+
+        let ledger = try MeetingUploadLedger.persisted(
+            fileURL: ledgerFileURL,
+            clientSessionToken: meetingID.uuidString,
+            meetingRecordID: meetingID
+        )
+        guard let sessionID = ledger.snapshot.remoteSessionID,
+              !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        let status = try await client.getSessionStatus(sessionID: sessionID)
+        guard status.status.caseInsensitiveCompare("completed") == .orderedSame,
+              let result = status.transcriptResult else {
+            return false
+        }
+
+        let segments = result.segments.map {
+            MeetingTranscriptionSegmentPayload(
+                sequence: $0.sequence,
+                speakerLabel: $0.speakerLabel ?? "Unknown Speaker",
+                startTime: TimeInterval($0.startMS) / 1_000,
+                endTime: TimeInterval($0.endMS) / 1_000,
+                text: $0.text,
+                textEN: $0.translations?.en ?? "",
+                textZH: $0.translations?.zh ?? "",
+                textAR: $0.translations?.ar ?? ""
+            )
+        }
+        guard segments.contains(where: { !$0.textEN.isEmpty || !$0.textZH.isEmpty || !$0.textAR.isEmpty }) else {
+            return false
+        }
+
+        try await store.updateTranscription(
+            meetingID: meetingID,
+            fullText: result.fullText,
+            segments: segments
+        )
+        return true
+    }
+
+    private static func defaultLedgerURL(meetingID: UUID) -> URL {
         MeetingRecord.meetingsDirectory
             .appendingPathComponent("remote-session-ledgers", isDirectory: true)
             .appendingPathComponent("\(meetingID.uuidString).json")

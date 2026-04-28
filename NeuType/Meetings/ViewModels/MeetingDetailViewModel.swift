@@ -56,10 +56,12 @@ final class MeetingDetailViewModel: ObservableObject {
     private let meetingID: UUID
     private let store: MeetingRecordStore
     private let transcriptionService: MeetingTranscribing
+    private let transcriptTranslationRefresher: any MeetingTranscriptTranslationRefreshing
     private let summaryService: MeetingSummarizing
     private let summaryConfigProvider: MeetingSummaryConfigProviding
     private var recordsDidChangeObserver: NSObjectProtocol?
     private var isSummaryOperationInFlight = false
+    private var isTranscriptTranslationRefreshInFlight = false
     private var autoResumeFingerprint: String?
 
     init(
@@ -67,6 +69,7 @@ final class MeetingDetailViewModel: ObservableObject {
         audioURL: URL,
         store: MeetingRecordStore = .shared,
         transcriptionService: MeetingTranscribing = MeetingTranscriptionService(),
+        transcriptTranslationRefresher: (any MeetingTranscriptTranslationRefreshing)? = nil,
         summaryService: MeetingSummarizing = MeetingSummaryService(),
         summaryConfigProvider: MeetingSummaryConfigProviding = AppPreferences.shared,
         playbackCoordinator: MeetingPlaybackCoordinator? = nil
@@ -74,6 +77,8 @@ final class MeetingDetailViewModel: ObservableObject {
         self.meetingID = meetingID
         self.store = store
         self.transcriptionService = transcriptionService
+        self.transcriptTranslationRefresher = transcriptTranslationRefresher
+            ?? MeetingRemoteTranscriptTranslationRefresher(store: store)
         self.summaryService = summaryService
         self.summaryConfigProvider = summaryConfigProvider
         self.playbackCoordinator = playbackCoordinator ?? MeetingPlaybackCoordinator(audioURL: audioURL)
@@ -107,6 +112,7 @@ final class MeetingDetailViewModel: ObservableObject {
         if let meeting {
             syncActiveTab(previousMeeting: previousMeeting, currentMeeting: meeting, resetActiveTab: resetActiveTab)
         }
+        await refreshCompletedTranscriptTranslationsIfNeeded()
         if let meeting {
             if [.completed, .failed, .unsubmitted].contains(meeting.summaryStatus) {
                 isSummaryOperationInFlight = false
@@ -114,6 +120,34 @@ final class MeetingDetailViewModel: ObservableObject {
             } else {
                 resumeSummaryIfNeeded(for: meeting)
             }
+        }
+    }
+
+    private func refreshCompletedTranscriptTranslationsIfNeeded() async {
+        guard !isTranscriptTranslationRefreshInFlight,
+              let currentMeeting = meeting,
+              currentMeeting.status == .completed,
+              segments.contains(where: { !$0.hasCompleteTranslations }) else {
+            return
+        }
+
+        isTranscriptTranslationRefreshInFlight = true
+        defer { isTranscriptTranslationRefreshInFlight = false }
+
+        do {
+            let didRefresh = try await transcriptTranslationRefresher
+                .refreshCompletedTranslationsIfNeeded(
+                    meetingID: meetingID,
+                    existingSegments: segments
+                )
+            guard didRefresh else { return }
+            self.meeting = try await store.fetchMeeting(id: meetingID)
+            segments = try await store.fetchSegments(meetingID: meetingID)
+            playbackCoordinator.setSegments(segments)
+        } catch {
+            MeetingLog.error(
+                "Meeting transcript translation refresh failed meetingID=\(meetingID) error=\(error.localizedDescription)"
+            )
         }
     }
 

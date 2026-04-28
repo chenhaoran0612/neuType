@@ -64,9 +64,13 @@ final class MeetingDetailViewSourceTests: XCTestCase {
     func testTranscriptPaneIncludesLanguagePickerAndSelectedLanguageExport() throws {
         let source = try meetingDetailViewSource()
 
-        XCTAssertTrue(
+        XCTAssertFalse(
             source.contains("Picker(\"文字语言\", selection: $viewModel.selectedTranscriptLanguage)"),
-            "Transcript pane should expose the original/translated transcript language picker."
+            "Transcript pane should not render the redundant visible '文字语言' label."
+        )
+        XCTAssertTrue(
+            source.contains("Picker(\"\", selection: $viewModel.selectedTranscriptLanguage)"),
+            "Transcript pane should expose the original/translated transcript language picker without a visible label."
         )
         XCTAssertTrue(
             source.contains("MeetingTranscriptLanguage.allCases"),

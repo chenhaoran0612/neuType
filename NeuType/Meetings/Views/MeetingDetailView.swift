@@ -566,7 +566,7 @@ private struct MeetingTranscriptPane: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
-                    Picker("文字语言", selection: $viewModel.selectedTranscriptLanguage) {
+                    Picker("", selection: $viewModel.selectedTranscriptLanguage) {
                         ForEach(MeetingTranscriptLanguage.allCases) { language in
                             Text(language.title).tag(language)
                         }

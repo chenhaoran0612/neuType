@@ -87,6 +87,12 @@ struct MeetingTranscriptSegment: Identifiable, Codable, FetchableRecord, Persist
         }
     }
 
+    var hasCompleteTranslations: Bool {
+        nonEmptyTranslation(textEN) != nil
+            && nonEmptyTranslation(textZH) != nil
+            && nonEmptyTranslation(textAR) != nil
+    }
+
     private func nonEmptyTranslation(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : value
