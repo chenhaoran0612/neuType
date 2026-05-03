@@ -136,6 +136,21 @@ final class AppPreferences: @unchecked Sendable {
     @UserDefault(key: "meetingSummaryAPIKey", defaultValue: "")
     var meetingSummaryAPIKey: String
 
+    @UserDefault(key: "liveMeetingCaptionSourceLanguage", defaultValue: RealTimeMeetingCaptionLanguage.english.rawValue)
+    var liveMeetingCaptionSourceLanguage: String
+
+    @UserDefault(key: "liveMeetingCaptionTargetLanguage", defaultValue: RealTimeMeetingCaptionLanguage.chineseSimplified.rawValue)
+    var liveMeetingCaptionTargetLanguage: String
+
+    @UserDefault(key: "liveMeetingCaptionAzureRegion", defaultValue: "eastus")
+    var liveMeetingCaptionAzureRegion: String
+
+    @UserDefault(key: "liveMeetingCaptionSubtitleRetentionCount", defaultValue: 20)
+    var liveMeetingCaptionSubtitleRetentionCount: Int
+
+    @UserDefault(key: "liveMeetingCaptionChunkDurationMS", defaultValue: 200)
+    var liveMeetingCaptionChunkDurationMS: Int
+
     @UserDefault(key: "didPromptForScreenRecordingPermission", defaultValue: false)
     var didPromptForScreenRecordingPermission: Bool
 

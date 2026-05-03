@@ -18,12 +18,17 @@ final class AppNavigationController: ObservableObject {
     enum WorkspaceSelection {
         case home
         case voiceInput
+        case liveMeetingCaptions
     }
 
     @Published var selectedWorkspace: WorkspaceSelection = .home
 
     func openVoiceInput() {
         selectedWorkspace = .voiceInput
+    }
+
+    func openLiveMeetingCaptions() {
+        selectedWorkspace = .liveMeetingCaptions
     }
 
     func returnHome() {
@@ -211,6 +216,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         meetingMinutesItem.target = self
         menu.addItem(meetingMinutesItem)
 
+        let liveCaptionsItem = NSMenuItem(title: "打开实时会议字幕", action: #selector(openLiveMeetingCaptionsFromMenu), keyEquivalent: "")
+        liveCaptionsItem.target = self
+        menu.addItem(liveCaptionsItem)
+
         menu.addItem(NSMenuItem.separator())
         
         let microphoneMenu = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
@@ -300,6 +309,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NotificationCenter.default.post(name: .openMeetingMinutes, object: nil)
     }
 
+    @objc func openLiveMeetingCaptionsFromMenu() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .openLiveMeetingCaptions, object: nil)
+    }
+
     @objc func openSettingsFromMenu() {
         showMainWindow()
         NotificationCenter.default.post(name: .openSettings, object: nil)
@@ -331,7 +345,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
 extension AppDelegate: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if appNavigation.selectedWorkspace == .voiceInput {
+        if appNavigation.selectedWorkspace == .voiceInput || appNavigation.selectedWorkspace == .liveMeetingCaptions {
             RequestLogStore.log(.usage, "Voice Input: returned home via window close")
             appNavigation.returnHome()
             return false

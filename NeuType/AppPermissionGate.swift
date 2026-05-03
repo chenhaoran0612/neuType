@@ -20,9 +20,6 @@ struct AppPermissionGate {
 
     var blocksMainInterface: Bool {
         !isMicrophonePermissionGranted ||
-        !isAccessibilityPermissionGranted ||
-        (screenRecordingPermissionState != .granted &&
-         screenRecordingPermissionState != .needsRelaunch &&
-         !isScreenRecordingPermissionGranted)
+        !isAccessibilityPermissionGranted
     }
 }

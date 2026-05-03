@@ -9,18 +9,32 @@ import SwiftUI
 extension KeyboardShortcuts.Name {
     static let toggleRecord = Self("toggleRecord", default: .init(.backtick, modifiers: .option))
     static let toggleMeetingRecord = Self("toggleMeetingRecord", default: .init(.m, modifiers: [.option, .shift]))
+    static let toggleLiveMeetingCaptions = Self("toggleLiveMeetingCaptions", default: .init(.c, modifiers: [.option, .shift]))
     static let escape = Self("escape", default: .init(.escape))
 }
 
-struct MeetingShortcutValidator {
+struct UniqueShortcutValidator {
     let dictationShortcut: KeyboardShortcuts.Shortcut?
+    let reservedShortcuts: [KeyboardShortcuts.Shortcut?]
+
+    init(
+        dictationShortcut: KeyboardShortcuts.Shortcut?,
+        reservedShortcuts: [KeyboardShortcuts.Shortcut?] = []
+    ) {
+        self.dictationShortcut = dictationShortcut
+        self.reservedShortcuts = reservedShortcuts
+    }
 
     func canUse(_ shortcut: KeyboardShortcuts.Shortcut?) -> Bool {
         guard let shortcut else { return true }
-        guard let dictationShortcut else { return true }
-        return shortcut != dictationShortcut
+        if let dictationShortcut, shortcut == dictationShortcut {
+            return false
+        }
+        return !reservedShortcuts.compactMap { $0 }.contains(shortcut)
     }
 }
+
+typealias MeetingShortcutValidator = UniqueShortcutValidator
 
 class ShortcutManager {
     static let shared = ShortcutManager()
@@ -97,6 +111,14 @@ class ShortcutManager {
                 let shortcutDescription = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)?.description ?? "unconfigured"
                 RequestLogStore.log(.usage, "Meeting shortcut keyDown: \(shortcutDescription)")
                 NotificationCenter.default.post(name: .toggleMeetingMinutesShortcut, object: nil)
+            }
+        }
+
+        KeyboardShortcuts.onKeyDown(for: .toggleLiveMeetingCaptions) {
+            Task { @MainActor in
+                let shortcutDescription = KeyboardShortcuts.Shortcut(name: .toggleLiveMeetingCaptions)?.description ?? "unconfigured"
+                RequestLogStore.log(.usage, "Live captions shortcut keyDown: \(shortcutDescription)")
+                NotificationCenter.default.post(name: .toggleLiveMeetingCaptionsShortcut, object: nil)
             }
         }
     }

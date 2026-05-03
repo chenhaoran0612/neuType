@@ -343,8 +343,10 @@ struct ContentView: View {
             } else {
                 if appNavigation.selectedWorkspace == .home {
                     homeSelectionView
-                } else {
+                } else if appNavigation.selectedWorkspace == .voiceInput {
                     voiceInputWorkspace
+                } else {
+                    liveMeetingCaptionWorkspace
                 }
             }
         }
@@ -402,6 +404,11 @@ struct ContentView: View {
             appNavigation.openVoiceInput()
             meetingSession.dismiss()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openLiveMeetingCaptions)) { _ in
+            MeetingLog.info("Main window switch to live meeting captions workspace")
+            appNavigation.openLiveMeetingCaptions()
+            meetingSession.dismiss()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .returnToHome)) { _ in
             MeetingLog.info("Main window switch to home workspace")
             appNavigation.returnHome()
@@ -423,49 +430,65 @@ struct ContentView: View {
                 await meetingSession.handleShortcut()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleLiveMeetingCaptionsShortcut)) { _ in
+            Task {
+                await LiveMeetingCaptionShortcutCoordinator.shared.toggle()
+            }
+        }
     }
 
     private var homeSelectionView: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("NeuType")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.primary)
+        ScrollView(showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("NeuType")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(.primary)
 
-                Text("选择你要使用的工作区。")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 30)
-
-            VStack(spacing: 16) {
-                workspaceCard(
-                    title: "音频输入",
-                    subtitle: "录音、拖入音频、查看语音输入历史。",
-                    iconName: "waveform.badge.mic",
-                    accent: Color(red: 0.16, green: 0.47, blue: 0.93)
-                ) {
-                    MeetingLog.info("Home workspace selected voice input")
-                    appNavigation.openVoiceInput()
+                    Text("选择你要使用的工作区。")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 28)
+                .padding(.top, 26)
 
-                workspaceCard(
-                    title: "会议记录",
-                    subtitle: "录制会议、导入音频、查看文字记录与播放结果。",
-                    iconName: "person.2.wave.2.fill",
-                    accent: Color(red: 0.11, green: 0.68, blue: 0.78)
-                ) {
-                    MeetingLog.info("Home workspace selected meeting history")
-                    meetingSession.present()
+                VStack(spacing: 12) {
+                    workspaceCard(
+                        title: "音频输入",
+                        subtitle: "录音、拖入音频、查看语音输入历史。",
+                        iconName: "waveform.badge.mic",
+                        accent: Color(red: 0.16, green: 0.47, blue: 0.93)
+                    ) {
+                        MeetingLog.info("Home workspace selected voice input")
+                        appNavigation.openVoiceInput()
+                    }
+
+                    workspaceCard(
+                        title: "会议记录",
+                        subtitle: "录制会议、导入音频、查看文字记录与播放结果。",
+                        iconName: "person.2.wave.2.fill",
+                        accent: Color(red: 0.11, green: 0.68, blue: 0.78)
+                    ) {
+                        MeetingLog.info("Home workspace selected meeting history")
+                        meetingSession.present()
+                    }
+
+                    workspaceCard(
+                        title: "实时会议字幕",
+                        subtitle: "自动判断输入语种，实时翻译并渲染字幕。",
+                        iconName: "captions.bubble.fill",
+                        accent: Color(red: 0.72, green: 0.35, blue: 0.11)
+                    ) {
+                        MeetingLog.info("Home workspace selected live meeting captions")
+                        appNavigation.openLiveMeetingCaptions()
+                    }
                 }
-            }
-            .padding(.horizontal, 20)
-
-            settingsPanel
                 .padding(.horizontal, 20)
 
-            Spacer()
+                settingsPanel
+                    .padding(.horizontal, 20)
+            }
+            .padding(.bottom, 28)
         }
     }
 
@@ -816,6 +839,10 @@ struct ContentView: View {
                 }
     }
 
+    private var liveMeetingCaptionWorkspace: some View {
+        RealTimeMeetingCaptionView()
+    }
+
     private func workspaceCard(
         title: String,
         subtitle: String,
@@ -824,20 +851,20 @@ struct ContentView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 16) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(accent.opacity(0.12))
-                        .frame(width: 54, height: 54)
+                        .frame(width: 48, height: 48)
 
                     Image(systemName: iconName)
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.system(size: 21, weight: .semibold))
                         .foregroundStyle(accent)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(title)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(.primary)
 
                     Text(subtitle)
@@ -845,27 +872,24 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                         .lineSpacing(3)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack {
-                    Text("打开")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 12, weight: .semibold))
-                }
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(accent)
             }
-            .frame(maxWidth: .infinity, minHeight: 176, alignment: .leading)
-            .padding(22)
+            .frame(maxWidth: .infinity, minHeight: 94, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(ThemePalette.cardBackground(colorScheme))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(ThemePalette.cardBorder(colorScheme), lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
     }

@@ -86,11 +86,31 @@ class SettingsViewModel: ObservableObject {
         didSet { AppPreferences.shared.meetingSummaryAPIKey = meetingSummaryAPIKey }
     }
 
+    @Published var liveMeetingCaptionAzureSpeechKey: String {
+        didSet { LiveMeetingCaptionCredentialsStore.subscriptionKey = liveMeetingCaptionAzureSpeechKey }
+    }
+
+    @Published var liveMeetingCaptionAzureRegion: String {
+        didSet {
+            AppPreferences.shared.liveMeetingCaptionAzureRegion = liveMeetingCaptionAzureRegion
+            LiveMeetingCaptionCredentialsStore.region = liveMeetingCaptionAzureRegion
+        }
+    }
+
+    @Published var liveMeetingCaptionSubtitleRetentionCount: Double {
+        didSet { AppPreferences.shared.liveMeetingCaptionSubtitleRetentionCount = Int(liveMeetingCaptionSubtitleRetentionCount) }
+    }
+
+    @Published var liveMeetingCaptionChunkDurationMS: Double {
+        didSet { AppPreferences.shared.liveMeetingCaptionChunkDurationMS = Int(liveMeetingCaptionChunkDurationMS) }
+    }
+
     @Published var selectedLogKind: RequestLogKind = .asr
     @Published var isAdjustingIndicatorPosition = false
     @Published var settingsTransferStatusMessage: String?
     @Published var settingsTransferStatusIsError = false
     @Published var meetingShortcutError: String?
+    @Published var liveCaptionShortcutError: String?
 
     @MainActor
     var filteredLogs: [RequestLogEntry] {
@@ -121,7 +141,14 @@ class SettingsViewModel: ObservableObject {
         meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
         meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
         meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
+        liveMeetingCaptionAzureSpeechKey = LiveMeetingCaptionCredentialsStore.subscriptionKey
+        liveMeetingCaptionAzureRegion = LiveMeetingCaptionCredentialsStore.region.isEmpty
+            ? AppPreferences.shared.liveMeetingCaptionAzureRegion
+            : LiveMeetingCaptionCredentialsStore.region
+        liveMeetingCaptionSubtitleRetentionCount = Double(AppPreferences.shared.liveMeetingCaptionSubtitleRetentionCount)
+        liveMeetingCaptionChunkDurationMS = Double(AppPreferences.shared.liveMeetingCaptionChunkDurationMS)
         validateMeetingShortcut()
+        validateLiveCaptionShortcut()
     }
 
     func startIndicatorPositionAdjusting() {
@@ -157,7 +184,14 @@ class SettingsViewModel: ObservableObject {
         meetingVibeVoiceRepetitionPenalty = meetingConfig.repetitionPenalty
         meetingSummaryBaseURL = MeetingSummaryConfig.defaultBaseURL
         meetingSummaryAPIKey = AppPreferences.shared.meetingSummaryAPIKey
+        liveMeetingCaptionAzureSpeechKey = LiveMeetingCaptionCredentialsStore.subscriptionKey
+        liveMeetingCaptionAzureRegion = LiveMeetingCaptionCredentialsStore.region.isEmpty
+            ? AppPreferences.shared.liveMeetingCaptionAzureRegion
+            : LiveMeetingCaptionCredentialsStore.region
+        liveMeetingCaptionSubtitleRetentionCount = Double(AppPreferences.shared.liveMeetingCaptionSubtitleRetentionCount)
+        liveMeetingCaptionChunkDurationMS = Double(AppPreferences.shared.liveMeetingCaptionChunkDurationMS)
         validateMeetingShortcut()
+        validateLiveCaptionShortcut()
     }
 
     func exportVisibleSettings(to url: URL) throws {
@@ -211,13 +245,25 @@ class SettingsViewModel: ObservableObject {
     }
 
     func validateMeetingShortcut() {
-        let validator = MeetingShortcutValidator(
-            dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord)
+        let validator = UniqueShortcutValidator(
+            dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord),
+            reservedShortcuts: [KeyboardShortcuts.Shortcut(name: .toggleLiveMeetingCaptions)]
         )
         let meetingShortcut = KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)
         meetingShortcutError = validator.canUse(meetingShortcut)
             ? nil
-            : "Meeting shortcut cannot match the dictation shortcut."
+            : "Meeting shortcut cannot match dictation or live captions shortcuts."
+    }
+
+    func validateLiveCaptionShortcut() {
+        let validator = UniqueShortcutValidator(
+            dictationShortcut: KeyboardShortcuts.Shortcut(name: .toggleRecord),
+            reservedShortcuts: [KeyboardShortcuts.Shortcut(name: .toggleMeetingRecord)]
+        )
+        let liveCaptionShortcut = KeyboardShortcuts.Shortcut(name: .toggleLiveMeetingCaptions)
+        liveCaptionShortcutError = validator.canUse(liveCaptionShortcut)
+            ? nil
+            : "Live captions shortcut cannot match dictation or meeting shortcuts."
     }
 }
 
@@ -421,6 +467,28 @@ private struct GeneralSettingsTabView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Live captions shortcut")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            KeyboardShortcuts.Recorder(for: .toggleLiveMeetingCaptions)
+                                .onChange(of: KeyboardShortcuts.Shortcut(name: .toggleLiveMeetingCaptions)) { _, _ in
+                                    viewModel.validateLiveCaptionShortcut()
+                                    viewModel.validateMeetingShortcut()
+                                }
+
+                            if let liveCaptionShortcutError = viewModel.liveCaptionShortcutError {
+                                Text(liveCaptionShortcutError)
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            } else {
+                                Text("Start or stop Real-time Meeting Captions. Starting shows the floating caption window and minimizes the main app window.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
@@ -573,6 +641,71 @@ private struct GeneralSettingsTabView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
                     Label("Meeting Summary Service", systemImage: "text.document.star")
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("实时会议字幕使用 Azure AI Speech Translation。Speech Key 保存到 Keychain，不会随设置导出；源语言自动识别范围固定为中文、英文、阿语。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        LabeledSecureInputField(
+                            title: "Speech Key",
+                            placeholder: "Azure Speech resource key",
+                            text: $viewModel.liveMeetingCaptionAzureSpeechKey
+                        )
+
+                        LabeledInputField(
+                            title: "Region",
+                            placeholder: "eastus",
+                            text: $viewModel.liveMeetingCaptionAzureRegion
+                        )
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Subtitle Retention")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(
+                                    value: $viewModel.liveMeetingCaptionSubtitleRetentionCount,
+                                    in: 5...80,
+                                    step: 1
+                                )
+                                Text("\(Int(viewModel.liveMeetingCaptionSubtitleRetentionCount)) 条")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Audio Frame")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(
+                                    value: $viewModel.liveMeetingCaptionChunkDurationMS,
+                                    in: 100...500,
+                                    step: 50
+                                )
+                                Text("\(Int(viewModel.liveMeetingCaptionChunkDurationMS)) ms")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        HStack(spacing: 12) {
+                            Link(
+                                "Azure Speech Translation",
+                                destination: URL(string: "https://learn.microsoft.com/azure/ai-services/speech-service/speech-translation")!
+                            )
+                            Link(
+                                "价格说明",
+                                destination: URL(string: "https://azure.microsoft.com/pricing/details/cognitive-services/speech-services/")!
+                            )
+                        }
+                        .font(.caption)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("实时会议字幕（Azure）", systemImage: "captions.bubble")
                 }
             }
             .padding(16)
@@ -740,6 +873,22 @@ private struct LabeledInputField: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             TextField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+}
+
+private struct LabeledSecureInputField: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            SecureField(placeholder, text: $text)
                 .textFieldStyle(.roundedBorder)
         }
     }

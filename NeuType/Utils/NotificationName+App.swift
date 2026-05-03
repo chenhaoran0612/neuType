@@ -9,6 +9,8 @@ extension Notification.Name {
     static let openVoiceInput = Notification.Name("OpenVoiceInput")
     static let openSettings = Notification.Name("OpenSettings")
     static let openMeetingMinutes = Notification.Name("OpenMeetingMinutes")
+    static let openLiveMeetingCaptions = Notification.Name("OpenLiveMeetingCaptions")
     static let toggleMeetingMinutesShortcut = Notification.Name("ToggleMeetingMinutesShortcut")
+    static let toggleLiveMeetingCaptionsShortcut = Notification.Name("ToggleLiveMeetingCaptionsShortcut")
     static let toggleMeetingPlayback = Notification.Name("ToggleMeetingPlayback")
 }

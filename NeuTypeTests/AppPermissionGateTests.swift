@@ -24,7 +24,7 @@ final class AppPermissionGateTests: XCTestCase {
         XCTAssertTrue(gate.blocksMainInterface)
     }
 
-    func testBlocksMainInterfaceWhenScreenRecordingPermissionIsMissing() {
+    func testDoesNotBlockMainInterfaceWhenScreenRecordingPermissionIsMissing() {
         let gate = AppPermissionGate(
             isMicrophonePermissionGranted: true,
             isAccessibilityPermissionGranted: true,
@@ -32,7 +32,7 @@ final class AppPermissionGateTests: XCTestCase {
             screenRecordingPermissionState: .needsAuthorization
         )
 
-        XCTAssertTrue(gate.blocksMainInterface)
+        XCTAssertFalse(gate.blocksMainInterface)
     }
 
     func testDoesNotBlockMainInterfaceWhenAllPermissionsAreGranted() {
